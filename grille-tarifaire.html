@@ -679,6 +679,8 @@
     <button class="gs-btn-primary" id="gs-connect-btn" onclick="googleConnect()">🔗 Connecter Google</button>
     <button class="gs-btn-secondary" id="gs-disconnect-btn" style="display:none;" onclick="googleDisconnect()">Déconnecter</button>
     <button class="gs-btn-secondary" id="gs-sync-all-btn" style="display:none;" onclick="googleSyncAllChantiers()">🔄 Synchroniser tous les chantiers</button>
+    <button class="gs-btn-secondary" id="gs-force-push-btn" style="display:none;" onclick="googleForcePush()">🚀 Envoyer mes données → Drive</button>
+    <button class="gs-btn-secondary" id="gs-force-pull-btn" style="display:none;" onclick="googleForcePull()">📥 Charger depuis Drive →</button>
   </div>
 </header>
 
@@ -7571,17 +7573,85 @@ function googleUpdateUI() {
   const btnDisconnect = document.getElementById('gs-disconnect-btn');
   const btnSyncAll = document.getElementById('gs-sync-all-btn');
   if (!info) return;
+  const btnForcePush = document.getElementById('gs-force-push-btn');
+  const btnForcePull = document.getElementById('gs-force-pull-btn');
   if (googleIsConnected()) {
     const shortMail = googleUserEmail ? (googleUserEmail.length > 25 ? googleUserEmail.slice(0,22) + '...' : googleUserEmail) : 'connecté';
     info.textContent = '✅ Synchronisé · ' + shortMail;
     btnConnect.style.display = 'none';
     btnDisconnect.style.display = 'inline-block';
     btnSyncAll.style.display = 'inline-block';
+    if (btnForcePush) btnForcePush.style.display = 'inline-block';
+    if (btnForcePull) btnForcePull.style.display = 'inline-block';
   } else {
     info.textContent = '🔌 Google : déconnecté';
     btnConnect.style.display = 'inline-block';
     btnDisconnect.style.display = 'none';
     btnSyncAll.style.display = 'none';
+    if (btnForcePush) btnForcePush.style.display = 'none';
+    if (btnForcePull) btnForcePull.style.display = 'none';
+  }
+}
+
+async function googleForcePush() {
+  if (!googleIsConnected()) { alert('Connecte-toi à Google d\'abord'); return; }
+  const cnt = data.chantiers?.length || 0;
+  const cl = data.clients?.length || 0;
+  if (!confirm('🚀 Envoyer tes données vers Google Drive ?\n\n' + cnt + ' chantier(s), ' + cl + ' client(s)\n\nÇa écrasera ce qu\'il y a actuellement sur Drive.')) return;
+  try {
+    googleSetStatus('🔄 Envoi vers Drive...', '#fff');
+    data._lastModified = Date.now();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    if (!googleDriveFileId) {
+      const found = await googleDriveFindFile();
+      if (found) googleDriveFileId = found.id;
+    }
+    if (googleDriveFileId) {
+      await googleDriveUpdateFile(googleDriveFileId, data);
+    } else {
+      googleDriveFileId = await googleDriveCreateFile(data);
+      localStorage.setItem('google_drive_file_id', googleDriveFileId);
+    }
+    googleSetStatus('✅ Envoyé sur Drive', '#b8e986');
+    toast('Données envoyées sur Drive');
+    setTimeout(() => googleSetStatus(''), 2500);
+  } catch(e) {
+    console.error(e);
+    googleSetStatus('⚠️ Erreur', '#ffd166');
+    alert('Erreur push : ' + e.message);
+  }
+}
+
+async function googleForcePull() {
+  if (!googleIsConnected()) { alert('Connecte-toi à Google d\'abord'); return; }
+  try {
+    googleSetStatus('🔄 Lecture Drive...', '#fff');
+    const found = await googleDriveFindFile();
+    if (!found) { alert('Aucun fichier sur Drive'); googleSetStatus(''); return; }
+    googleDriveFileId = found.id;
+    const remote = await googleDriveReadFile(found.id);
+    if (!remote) { alert('Fichier Drive vide ou illisible'); googleSetStatus(''); return; }
+    const cnt = remote.chantiers?.length || 0;
+    const cl = remote.clients?.length || 0;
+    const ach = remote.achats?.length || 0;
+    const st = remote.stock?.length || 0;
+    const myCnt = data.chantiers?.length || 0;
+    const myCl = data.clients?.length || 0;
+    let msg = '📥 Charger depuis Google Drive ?\n\n';
+    msg += '☁️ DRIVE : ' + cnt + ' chantier(s), ' + cl + ' client(s), ' + ach + ' achat(s), ' + st + ' stock\n';
+    msg += '📂 LOCAL (cet appareil) : ' + myCnt + ' chantier(s), ' + myCl + ' client(s)\n\n';
+    msg += '⚠️ Tes données locales seront REMPLACÉES par celles du Drive.\n\nContinuer ?';
+    if (!confirm(msg)) { googleSetStatus(''); return; }
+    try { localStorage.setItem('grille_tarifaire_v2_BEFORE_FORCE_PULL_' + Date.now(), JSON.stringify(data)); } catch(e){}
+    Object.keys(remote).forEach(k => { data[k] = remote[k]; });
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    googleSetStatus('✅ Drive chargé', '#b8e986');
+    toast('Drive chargé — rechargement');
+    setTimeout(() => location.reload(), 800);
+  } catch(e) {
+    console.error(e);
+    googleSetStatus('⚠️ Erreur', '#ffd166');
+    alert('Erreur pull : ' + e.message);
   }
 }
 
