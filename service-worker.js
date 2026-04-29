@@ -1,4 +1,4 @@
-const CACHE = 'tarifs-v18';
+const CACHE = 'tarifs-v19';
 const ASSETS = [
   './',
   './grille-tarifaire.html',

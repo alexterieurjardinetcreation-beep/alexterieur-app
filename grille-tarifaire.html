@@ -7495,16 +7495,10 @@ function renderComptaDashboard() {
   `;
 }
 
-// Service worker (PWA) - DÉSACTIVÉ TEMPORAIREMENT pour debug
-// On désinstalle aussi tout SW déjà enregistré pour éviter les caches qui bloquent
+// Service worker (PWA) - réactivé pour permettre l'installation comme app native
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.getRegistrations().then(regs => {
-      regs.forEach(r => r.unregister());
-    }).catch(() => {});
-    if ('caches' in window) {
-      caches.keys().then(keys => keys.forEach(k => caches.delete(k))).catch(() => {});
-    }
+    navigator.serviceWorker.register('service-worker.js').catch(() => {});
   });
 }
 
