@@ -7788,12 +7788,39 @@ async function googleDrivePullIfNewer() {
     const remoteTs = remote && remote._lastModified ? remote._lastModified : 0;
     const localTs = data._lastModified || 0;
     if (remoteTs > localTs + 1000) {
-      // Drive plus récent → écraser local
-      const ok = confirm('☁️ Données Google Drive plus récentes détectées.\n\nDate locale : ' + new Date(localTs).toLocaleString('fr-FR') +
-                          '\nDate Drive : ' + new Date(remoteTs).toLocaleString('fr-FR') +
-                          '\n\nCharger les données depuis Drive ? (Annuler = garder le local)');
+      // Drive plus récent → DEMANDER avec décompte détaillé pour qu'Alex compare
+      const cnt = (o) => ({
+        chantiers: (o?.chantiers||[]).length,
+        clients: (o?.clients||[]).length,
+        achats: (o?.achats||[]).length,
+        stock: (o?.stock||[]).length,
+        devis: (o?.devis||[]).length
+      });
+      const cl = cnt(data), cr = cnt(remote);
+      const driveLessData = (cr.chantiers + cr.clients + cr.achats + cr.stock) < (cl.chantiers + cl.clients + cl.achats + cl.stock);
+      let msg = '☁️ Synchronisation Google Drive\n\n';
+      msg += '📂 LOCAL (cet appareil) :\n';
+      msg += '  • ' + cl.chantiers + ' chantier(s)\n';
+      msg += '  • ' + cl.clients + ' client(s)\n';
+      msg += '  • ' + cl.achats + ' achat(s)\n';
+      msg += '  • ' + cl.stock + ' article(s) en stock\n';
+      msg += '  Modifié : ' + (localTs ? new Date(localTs).toLocaleString('fr-FR') : '(jamais)') + '\n\n';
+      msg += '☁️ DRIVE (cloud) :\n';
+      msg += '  • ' + cr.chantiers + ' chantier(s)\n';
+      msg += '  • ' + cr.clients + ' client(s)\n';
+      msg += '  • ' + cr.achats + ' achat(s)\n';
+      msg += '  • ' + cr.stock + ' article(s) en stock\n';
+      msg += '  Modifié : ' + new Date(remoteTs).toLocaleString('fr-FR') + '\n\n';
+      if (driveLessData) {
+        msg += '⚠️ ATTENTION : DRIVE A MOINS DE DONNÉES QUE LE LOCAL !\n';
+        msg += 'Charger Drive va EFFACER des données locales.\n\n';
+      }
+      msg += 'OK = Remplacer le local par les données Drive\n';
+      msg += 'Annuler = Garder le local et écraser Drive';
+      const ok = confirm(msg);
       if (ok) {
-        // Préserver la structure attendue
+        // Sauvegarde de sécurité dans localStorage avant écrasement
+        try { localStorage.setItem('grille_tarifaire_v2_BEFORE_DRIVE_PULL_' + Date.now(), JSON.stringify(data)); } catch(e){}
         Object.keys(remote).forEach(k => { data[k] = remote[k]; });
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
         googleSetStatus('✅ Drive chargé', '#b8e986');
@@ -7802,6 +7829,8 @@ async function googleDrivePullIfNewer() {
         return;
       } else {
         // Garder local et écraser Drive
+        data._lastModified = Date.now();
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
         await googleDriveUpdateFile(googleDriveFileId, data);
       }
     } else if (localTs > remoteTs + 1000) {
