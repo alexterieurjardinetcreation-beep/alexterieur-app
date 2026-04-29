@@ -545,7 +545,17 @@
   }
   .dv-print-totals td { padding: 4px 8px; }
   .dv-print-totals .grand { font-size: 16px; font-weight: 700; color: #5ba241; border-top: 2px solid #5ba241; padding-top: 8px; }
+
+  /* Google Sync UI */
+  #google-sync-zone { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:6px; }
+  #google-sync-zone .gs-info { font-size:12px; color:rgba(255,255,255,0.9); }
+  #google-sync-zone .gs-status { font-size:12px; color:rgba(255,255,255,0.85); min-width:90px; }
+  #google-sync-zone button { font-size:12px; padding:5px 10px; border:none; border-radius:5px; cursor:pointer; }
+  #google-sync-zone .gs-btn-primary { background:#fff; color:#3d6f28; font-weight:600; }
+  #google-sync-zone .gs-btn-secondary { background:rgba(255,255,255,0.18); color:#fff; }
+  #google-sync-zone .gs-btn-secondary:hover { background:rgba(255,255,255,0.28); }
 </style>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
 <div id="auth-overlay" style="position:fixed;inset:0;background:linear-gradient(135deg,#5ba241 0%,#3d6f28 100%);display:none;align-items:center;justify-content:center;z-index:100000;font-family:system-ui,sans-serif;padding:20px;">
@@ -662,6 +672,13 @@
     <span id="backup-status" style="font-size:12px; color:rgba(255,255,255,0.85);"></span>
     <button id="backup-btn" class="btn-ghost btn-small" style="margin-left:8px;" onclick="toggleBackup()">Sauvegarde auto</button>
     <button class="btn-ghost btn-small" onclick="manualBackup()">Sauvegarder maintenant</button>
+  </div>
+  <div id="google-sync-zone">
+    <span class="gs-info" id="gs-info">🔌 Google : déconnecté</span>
+    <span class="gs-status" id="gs-status"></span>
+    <button class="gs-btn-primary" id="gs-connect-btn" onclick="googleConnect()">🔗 Connecter Google</button>
+    <button class="gs-btn-secondary" id="gs-disconnect-btn" style="display:none;" onclick="googleDisconnect()">Déconnecter</button>
+    <button class="gs-btn-secondary" id="gs-sync-all-btn" style="display:none;" onclick="googleSyncAllChantiers()">🔄 Synchroniser tous les chantiers</button>
   </div>
 </header>
 
@@ -1495,7 +1512,11 @@ function loadData() {
         if (!ch.sessions) ch.sessions = [];
         if (ch.activeSession === undefined) ch.activeSession = null;
         if (!ch.soustraitants) ch.soustraitants = [];
+        // Migration silencieuse v20 : Google Calendar event id
+        if (ch.googleEventId === undefined) ch.googleEventId = null;
       });
+      // Migration silencieuse v20 : timestamp pour sync Drive
+      if (!parsed._lastModified) parsed._lastModified = Date.now();
       return parsed;
     }
     return JSON.parse(JSON.stringify(DEFAULT_DATA));
@@ -1505,7 +1526,12 @@ function loadData() {
 }
 
 function saveData() {
+  data._lastModified = Date.now();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  // Hook : sync Drive (debounced) si Google connecté
+  if (typeof scheduleGoogleDriveSync === 'function') {
+    try { scheduleGoogleDriveSync(); } catch(e) { console.warn('Drive sync schedule error', e); }
+  }
 }
 
 function toast(msg) {
@@ -1882,6 +1908,11 @@ function saveChantier() {
   data.chantiers.push(chantier);
   saveData();
 
+  // Sync Google Calendar si connecté
+  if (typeof googleSyncChantierEvent === 'function') {
+    try { googleSyncChantierEvent(chantier); } catch(e) { console.warn('Calendar sync error', e); }
+  }
+
   // reset form
   document.getElementById('new-client').value = '';
   document.getElementById('new-date').value = '';
@@ -2057,6 +2088,11 @@ function renderChantiers() {
 
 function removeChantier(id) {
   if (!confirm("Supprimer ce chantier ?")) return;
+  const ch = data.chantiers.find(c => c.id === id);
+  // Supprimer l'event Calendar associé si Google connecté
+  if (ch && ch.googleEventId && typeof googleDeleteChantierEvent === 'function') {
+    try { googleDeleteChantierEvent(ch.googleEventId); } catch(e) { console.warn('Calendar delete error', e); }
+  }
   data.chantiers = data.chantiers.filter(c => c.id !== id);
   saveData();
   renderChantiers();
@@ -6172,6 +6208,12 @@ function updateChantierField(chId, field, val) {
   saveData();
   renderChantierDetail(ch);
   renderChantiers();
+
+  // Sync Google Calendar si champ pertinent + Google connecté
+  const calendarFields = ['date','adresse','montantHT','client','statut','materielLibre','notes'];
+  if (calendarFields.includes(field) && typeof googleSyncChantierEvent === 'function') {
+    try { googleSyncChantierEvent(ch); } catch(e) { console.warn('Calendar sync error', e); }
+  }
 }
 
 function addAchat(chId) {
@@ -7494,6 +7536,439 @@ function renderComptaDashboard() {
     </div>
   `;
 }
+
+/* ============================================================
+   GOOGLE OAUTH + DRIVE SYNC + CALENDAR SYNC
+   ============================================================ */
+
+const GOOGLE_CLIENT_ID = '204860828648-chc4amgulakt4qtdqiousrjpbj5f4ggc.apps.googleusercontent.com';
+const GOOGLE_SCOPES = 'https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/drive.appdata';
+const GOOGLE_DRIVE_FILE = 'alexterieur-data.json';
+
+let googleTokenClient = null;
+let googleDriveFileId = null;
+let googleUserEmail = null;
+window.googleAccessToken = null;
+let _googleDriveSyncTimer = null;
+let _googleSilentRefreshTimer = null;
+
+function googleIsConnected() {
+  if (!window.googleAccessToken) return false;
+  const exp = parseInt(localStorage.getItem('google_token_expires') || '0', 10);
+  return exp > Date.now() + 5000;
+}
+
+function googleSetStatus(msg, color) {
+  const el = document.getElementById('gs-status');
+  if (!el) return;
+  el.textContent = msg || '';
+  el.style.color = color || 'rgba(255,255,255,0.85)';
+}
+
+function googleUpdateUI() {
+  const info = document.getElementById('gs-info');
+  const btnConnect = document.getElementById('gs-connect-btn');
+  const btnDisconnect = document.getElementById('gs-disconnect-btn');
+  const btnSyncAll = document.getElementById('gs-sync-all-btn');
+  if (!info) return;
+  if (googleIsConnected()) {
+    const shortMail = googleUserEmail ? (googleUserEmail.length > 25 ? googleUserEmail.slice(0,22) + '...' : googleUserEmail) : 'connecté';
+    info.textContent = '✅ Synchronisé · ' + shortMail;
+    btnConnect.style.display = 'none';
+    btnDisconnect.style.display = 'inline-block';
+    btnSyncAll.style.display = 'inline-block';
+  } else {
+    info.textContent = '🔌 Google : déconnecté';
+    btnConnect.style.display = 'inline-block';
+    btnDisconnect.style.display = 'none';
+    btnSyncAll.style.display = 'none';
+  }
+}
+
+function googleInitTokenClient() {
+  if (googleTokenClient) return googleTokenClient;
+  if (!window.google || !window.google.accounts || !window.google.accounts.oauth2) {
+    return null;
+  }
+  googleTokenClient = window.google.accounts.oauth2.initTokenClient({
+    client_id: GOOGLE_CLIENT_ID,
+    scope: GOOGLE_SCOPES,
+    callback: (resp) => {
+      if (resp.error) {
+        console.warn('Google token error', resp);
+        googleSetStatus('⚠️ Erreur connexion', '#ffd166');
+        return;
+      }
+      const expiresIn = parseInt(resp.expires_in || 3600, 10);
+      const expiresAt = Date.now() + expiresIn * 1000;
+      window.googleAccessToken = resp.access_token;
+      localStorage.setItem('google_token', resp.access_token);
+      localStorage.setItem('google_token_expires', String(expiresAt));
+      googleScheduleSilentRefresh(expiresIn);
+      googleFetchUserInfo().then(() => {
+        googleUpdateUI();
+        googleOnLoginSuccess();
+      });
+    }
+  });
+  return googleTokenClient;
+}
+
+function googleConnect() {
+  const client = googleInitTokenClient();
+  if (!client) {
+    alert('Le SDK Google n\'est pas encore chargé. Réessaie dans 2 secondes.');
+    return;
+  }
+  googleSetStatus('🔄 Connexion...', '#fff');
+  client.requestAccessToken({ prompt: googleIsConnected() ? '' : 'consent' });
+}
+
+function googleDisconnect() {
+  if (window.google && window.google.accounts && window.google.accounts.oauth2 && window.googleAccessToken) {
+    try { window.google.accounts.oauth2.revoke(window.googleAccessToken, () => {}); } catch(e) {}
+  }
+  window.googleAccessToken = null;
+  googleUserEmail = null;
+  googleDriveFileId = null;
+  localStorage.removeItem('google_token');
+  localStorage.removeItem('google_token_expires');
+  localStorage.removeItem('google_user_email');
+  localStorage.removeItem('google_drive_file_id');
+  if (_googleSilentRefreshTimer) { clearTimeout(_googleSilentRefreshTimer); _googleSilentRefreshTimer = null; }
+  googleSetStatus('');
+  googleUpdateUI();
+  toast('Google déconnecté');
+}
+
+function googleScheduleSilentRefresh(expiresIn) {
+  if (_googleSilentRefreshTimer) clearTimeout(_googleSilentRefreshTimer);
+  // Refresh 60s avant expiration
+  const ms = Math.max(10000, (expiresIn - 60) * 1000);
+  _googleSilentRefreshTimer = setTimeout(() => {
+    const client = googleInitTokenClient();
+    if (client) client.requestAccessToken({ prompt: '' });
+  }, ms);
+}
+
+async function googleFetchUserInfo() {
+  if (!window.googleAccessToken) return;
+  try {
+    const r = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: 'Bearer ' + window.googleAccessToken }
+    });
+    if (r.ok) {
+      const j = await r.json();
+      googleUserEmail = j.email || null;
+      if (googleUserEmail) localStorage.setItem('google_user_email', googleUserEmail);
+    }
+  } catch(e) { console.warn('userinfo error', e); }
+}
+
+async function googleApi(url, options) {
+  options = options || {};
+  options.headers = options.headers || {};
+  options.headers['Authorization'] = 'Bearer ' + window.googleAccessToken;
+  const r = await fetch(url, options);
+  if (r.status === 401) {
+    // Token expiré — tente un refresh silencieux
+    const client = googleInitTokenClient();
+    if (client) {
+      await new Promise((resolve) => {
+        const oldCb = googleTokenClient.callback;
+        googleTokenClient.callback = (resp) => {
+          oldCb(resp);
+          resolve();
+        };
+        client.requestAccessToken({ prompt: '' });
+        setTimeout(resolve, 5000);
+      });
+      // Retry une fois
+      options.headers['Authorization'] = 'Bearer ' + window.googleAccessToken;
+      return fetch(url, options);
+    }
+  }
+  return r;
+}
+
+/* -------- DRIVE SYNC -------- */
+
+async function googleDriveFindFile() {
+  const url = 'https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=' +
+              encodeURIComponent("name='" + GOOGLE_DRIVE_FILE + "' and trashed=false") +
+              '&fields=files(id,name,modifiedTime)';
+  const r = await googleApi(url);
+  if (!r.ok) throw new Error('Drive find failed: ' + r.status);
+  const j = await r.json();
+  if (j.files && j.files.length > 0) return j.files[0];
+  return null;
+}
+
+async function googleDriveReadFile(fileId) {
+  const r = await googleApi('https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media');
+  if (!r.ok) throw new Error('Drive read failed: ' + r.status);
+  return await r.json();
+}
+
+async function googleDriveCreateFile(jsonData) {
+  const boundary = 'aXt_' + Date.now();
+  const metadata = { name: GOOGLE_DRIVE_FILE, parents: ['appDataFolder'] };
+  const body =
+    '--' + boundary + '\r\n' +
+    'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+    JSON.stringify(metadata) + '\r\n' +
+    '--' + boundary + '\r\n' +
+    'Content-Type: application/json\r\n\r\n' +
+    JSON.stringify(jsonData) + '\r\n' +
+    '--' + boundary + '--';
+  const r = await googleApi('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
+    method: 'POST',
+    headers: { 'Content-Type': 'multipart/related; boundary=' + boundary },
+    body: body
+  });
+  if (!r.ok) throw new Error('Drive create failed: ' + r.status);
+  const j = await r.json();
+  return j.id;
+}
+
+async function googleDriveUpdateFile(fileId, jsonData) {
+  const r = await googleApi('https://www.googleapis.com/upload/drive/v3/files/' + fileId + '?uploadType=media', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(jsonData)
+  });
+  if (!r.ok) throw new Error('Drive update failed: ' + r.status);
+  return true;
+}
+
+async function googleDrivePushNow() {
+  if (!googleIsConnected()) return;
+  try {
+    googleSetStatus('🔄 Sync...', '#fff');
+    if (!googleDriveFileId) {
+      const found = await googleDriveFindFile();
+      if (found) googleDriveFileId = found.id;
+    }
+    if (googleDriveFileId) {
+      await googleDriveUpdateFile(googleDriveFileId, data);
+    } else {
+      googleDriveFileId = await googleDriveCreateFile(data);
+      localStorage.setItem('google_drive_file_id', googleDriveFileId);
+    }
+    googleSetStatus('✅ Sync OK', '#b8e986');
+    setTimeout(() => googleSetStatus(''), 2500);
+  } catch(e) {
+    console.warn('Drive push failed', e);
+    googleSetStatus('⚠️ Erreur sync', '#ffd166');
+  }
+}
+
+function scheduleGoogleDriveSync() {
+  if (!googleIsConnected()) return;
+  if (_googleDriveSyncTimer) clearTimeout(_googleDriveSyncTimer);
+  _googleDriveSyncTimer = setTimeout(() => googleDrivePushNow(), 4000);
+}
+
+async function googleDrivePullIfNewer() {
+  if (!googleIsConnected()) return;
+  try {
+    googleSetStatus('🔄 Sync...', '#fff');
+    const found = await googleDriveFindFile();
+    if (!found) {
+      // Rien sur Drive → push initial
+      googleDriveFileId = await googleDriveCreateFile(data);
+      localStorage.setItem('google_drive_file_id', googleDriveFileId);
+      googleSetStatus('✅ Drive initialisé', '#b8e986');
+      setTimeout(() => googleSetStatus(''), 2500);
+      return;
+    }
+    googleDriveFileId = found.id;
+    localStorage.setItem('google_drive_file_id', googleDriveFileId);
+    const remote = await googleDriveReadFile(found.id);
+    const remoteTs = remote && remote._lastModified ? remote._lastModified : 0;
+    const localTs = data._lastModified || 0;
+    if (remoteTs > localTs + 1000) {
+      // Drive plus récent → écraser local
+      const ok = confirm('☁️ Données Google Drive plus récentes détectées.\n\nDate locale : ' + new Date(localTs).toLocaleString('fr-FR') +
+                          '\nDate Drive : ' + new Date(remoteTs).toLocaleString('fr-FR') +
+                          '\n\nCharger les données depuis Drive ? (Annuler = garder le local)');
+      if (ok) {
+        // Préserver la structure attendue
+        Object.keys(remote).forEach(k => { data[k] = remote[k]; });
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        googleSetStatus('✅ Drive chargé', '#b8e986');
+        toast('Données Drive chargées — rechargement de l\'UI');
+        setTimeout(() => location.reload(), 800);
+        return;
+      } else {
+        // Garder local et écraser Drive
+        await googleDriveUpdateFile(googleDriveFileId, data);
+      }
+    } else if (localTs > remoteTs + 1000) {
+      // Local plus récent → push
+      await googleDriveUpdateFile(googleDriveFileId, data);
+    }
+    googleSetStatus('✅ Sync OK', '#b8e986');
+    setTimeout(() => googleSetStatus(''), 2500);
+  } catch(e) {
+    console.warn('Drive pull failed', e);
+    googleSetStatus('⚠️ Erreur sync', '#ffd166');
+  }
+}
+
+/* -------- CALENDAR SYNC -------- */
+
+function googleBuildEventForChantier(ch) {
+  const clientName = (data.clients.find(c => c.id === ch.clientId) || {}).name || ch.client || 'Client';
+  const clientObj = data.clients.find(c => c.id === ch.clientId) || {};
+  const titre = 'Chantier ' + clientName;
+  const date = ch.date || new Date().toISOString().slice(0,10);
+  const startISO = date + 'T08:00:00';
+  const endISO = date + 'T17:00:00';
+  const adresse = ch.adresse || clientObj.address || '';
+  // Description
+  const lignes = [];
+  lignes.push('Client : ' + clientName);
+  if (clientObj.phone) lignes.push('Tél : ' + clientObj.phone);
+  if (ch.montantHT && ch.montantHT > 0) lignes.push('Montant HT : ' + ch.montantHT.toFixed(2) + ' €');
+  if (ch.statut) lignes.push('Statut : ' + ch.statut);
+  // Matériel
+  const lignesMat = [];
+  if (ch.prestations && ch.prestations.length > 0) {
+    ch.prestations.forEach(p => {
+      const it = findItemById(p.itemId);
+      if (it) lignesMat.push('- ' + it.desc + ' x' + p.qty);
+    });
+  }
+  if (ch.materielLibre && ch.materielLibre.trim()) {
+    lignesMat.push(ch.materielLibre.trim());
+  }
+  if (lignesMat.length > 0) {
+    lignes.push('');
+    lignes.push('Matériel prévu :');
+    lignes.push(lignesMat.join('\n'));
+  }
+  if (ch.notes) {
+    lignes.push('');
+    lignes.push('Notes : ' + ch.notes);
+  }
+  // Lien magique
+  const baseUrl = location.origin + location.pathname;
+  lignes.push('');
+  lignes.push('Voir fiche : ' + baseUrl + '?chantier=' + ch.id);
+  return {
+    summary: titre,
+    location: adresse,
+    description: lignes.join('\n'),
+    start: { dateTime: startISO, timeZone: 'Europe/Paris' },
+    end: { dateTime: endISO, timeZone: 'Europe/Paris' }
+  };
+}
+
+async function googleSyncChantierEvent(ch) {
+  if (!googleIsConnected()) return;
+  if (!ch || !ch.id) return;
+  try {
+    const event = googleBuildEventForChantier(ch);
+    if (ch.googleEventId) {
+      // Update
+      const r = await googleApi('https://www.googleapis.com/calendar/v3/calendars/primary/events/' + encodeURIComponent(ch.googleEventId), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(event)
+      });
+      if (r.status === 404 || r.status === 410) {
+        // Event supprimé côté Google → recréer
+        ch.googleEventId = null;
+        return googleSyncChantierEvent(ch);
+      }
+      if (!r.ok) throw new Error('Calendar update failed: ' + r.status);
+    } else {
+      // Create
+      const r = await googleApi('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(event)
+      });
+      if (!r.ok) throw new Error('Calendar create failed: ' + r.status);
+      const j = await r.json();
+      ch.googleEventId = j.id;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    }
+  } catch(e) {
+    console.warn('Calendar sync error for chantier', ch.id, e);
+  }
+}
+
+async function googleDeleteChantierEvent(eventId) {
+  if (!googleIsConnected() || !eventId) return;
+  try {
+    await googleApi('https://www.googleapis.com/calendar/v3/calendars/primary/events/' + encodeURIComponent(eventId), {
+      method: 'DELETE'
+    });
+  } catch(e) { console.warn('Calendar delete error', e); }
+}
+
+async function googleSyncAllChantiers() {
+  if (!googleIsConnected()) { alert('Connecte-toi à Google d\'abord'); return; }
+  const list = (data.chantiers || []).filter(c => c.statut !== 'cloture');
+  if (list.length === 0) { toast('Aucun chantier à synchroniser'); return; }
+  if (!confirm('Synchroniser ' + list.length + ' chantier(s) avec Google Agenda ?')) return;
+  googleSetStatus('🔄 Sync ' + list.length + ' chantiers...', '#fff');
+  let ok = 0, ko = 0;
+  for (const ch of list) {
+    try { await googleSyncChantierEvent(ch); ok++; }
+    catch(e) { ko++; }
+  }
+  saveData();
+  googleSetStatus('✅ ' + ok + ' OK · ' + ko + ' erreur(s)', '#b8e986');
+  toast('Synchro Agenda : ' + ok + ' OK / ' + ko + ' erreur(s)');
+  setTimeout(() => googleSetStatus(''), 3000);
+}
+
+function googleOnLoginSuccess() {
+  // 1) Pull Drive si plus récent, sinon push
+  googleDrivePullIfNewer();
+}
+
+/* -------- INIT -------- */
+
+function googleTryAutoLogin() {
+  const token = localStorage.getItem('google_token');
+  const expires = parseInt(localStorage.getItem('google_token_expires') || '0', 10);
+  const email = localStorage.getItem('google_user_email');
+  const fileId = localStorage.getItem('google_drive_file_id');
+  if (email) googleUserEmail = email;
+  if (fileId) googleDriveFileId = fileId;
+  if (token && expires > Date.now() + 5000) {
+    window.googleAccessToken = token;
+    googleScheduleSilentRefresh(Math.floor((expires - Date.now()) / 1000));
+    googleUpdateUI();
+    // Au démarrage, charger depuis Drive (silencieusement)
+    setTimeout(() => googleDrivePullIfNewer(), 500);
+  } else if (token && email) {
+    // Token expiré mais on a déjà eu un consentement → tenter refresh silencieux
+    const tryInit = () => {
+      if (window.google && window.google.accounts && window.google.accounts.oauth2) {
+        const c = googleInitTokenClient();
+        if (c) c.requestAccessToken({ prompt: '' });
+      } else {
+        setTimeout(tryInit, 500);
+      }
+    };
+    tryInit();
+  }
+  googleUpdateUI();
+}
+
+// Lance l'auto-login quand le SDK est prêt
+(function waitForGoogleSdk() {
+  if (window.google && window.google.accounts && window.google.accounts.oauth2) {
+    googleTryAutoLogin();
+  } else {
+    setTimeout(waitForGoogleSdk, 400);
+  }
+})();
 
 // Service worker (PWA) - réactivé pour permettre l'installation comme app native
 if ('serviceWorker' in navigator) {
