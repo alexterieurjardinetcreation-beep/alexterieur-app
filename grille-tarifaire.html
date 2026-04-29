@@ -548,6 +548,64 @@
 </style>
 </head>
 <body>
+<div id="auth-overlay" style="position:fixed;inset:0;background:linear-gradient(135deg,#5ba241 0%,#3d6f28 100%);display:none;align-items:center;justify-content:center;z-index:100000;font-family:system-ui,sans-serif;padding:20px;">
+  <div style="background:#fff;padding:32px 28px;border-radius:16px;max-width:380px;width:100%;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+    <div style="font-size:48px;margin-bottom:8px;">🌿</div>
+    <h2 style="margin:0 0 6px;color:#3d6f28;font-size:22px;">Alex'terieur</h2>
+    <p style="color:#777;font-size:13px;margin:0 0 24px;">Application protégée</p>
+    <input type="password" id="auth-input" autocomplete="current-password" style="width:100%;padding:14px;font-size:16px;border:2px solid #e0e0e0;border-radius:10px;margin-bottom:12px;outline:none;box-sizing:border-box;" placeholder="Mot de passe">
+    <button id="auth-btn" style="width:100%;padding:14px;font-size:16px;background:#5ba241;color:#fff;border:none;border-radius:10px;cursor:pointer;font-weight:600;transition:background .2s;">Entrer</button>
+    <div id="auth-error" style="color:#c0392b;margin-top:14px;font-size:13px;display:none;">❌ Mot de passe incorrect</div>
+    <div style="color:#aaa;font-size:11px;margin-top:18px;">Session valide 30 jours sur cet appareil</div>
+  </div>
+</div>
+<script>
+(function(){
+  const HASH = '0739a2aecabac78a6f32a2fc8366c7dd1a786f9fa19a5060f668359bbd74d7fa';
+  const AUTH_KEY = 'alex_auth_until';
+  const VALID_DAYS = 30;
+  async function sha256(text){
+    const buf = new TextEncoder().encode(text);
+    const hash = await crypto.subtle.digest('SHA-256', buf);
+    return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2,'0')).join('');
+  }
+  function isAuth(){
+    return parseInt(localStorage.getItem(AUTH_KEY)||'0') > Date.now();
+  }
+  function unlock(){
+    const o = document.getElementById('auth-overlay');
+    if (o) o.style.display = 'none';
+    document.body.style.overflow = '';
+  }
+  async function tryAuth(){
+    const inp = document.getElementById('auth-input');
+    const err = document.getElementById('auth-error');
+    if (!inp.value) return;
+    const h = await sha256(inp.value);
+    if (h === HASH) {
+      const until = Date.now() + VALID_DAYS*24*60*60*1000;
+      localStorage.setItem(AUTH_KEY, until.toString());
+      unlock();
+    } else {
+      err.style.display = 'block';
+      inp.value = '';
+      inp.focus();
+    }
+  }
+  if (isAuth()) {
+    // déjà authentifié
+  } else {
+    document.body.style.overflow = 'hidden';
+    document.getElementById('auth-overlay').style.display = 'flex';
+    setTimeout(()=>{
+      const inp = document.getElementById('auth-input');
+      const btn = document.getElementById('auth-btn');
+      if (inp){ inp.focus(); inp.addEventListener('keydown', e => { if (e.key==='Enter') tryAuth(); }); }
+      if (btn) btn.addEventListener('click', tryAuth);
+    }, 100);
+  }
+})();
+</script>
 <div id="error-banner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:99999;background:#c0392b;color:#fff;padding:12px 16px;font-family:system-ui;font-size:14px;line-height:1.5;box-shadow:0 2px 8px rgba(0,0,0,0.3);"></div>
 <script>
 (function() {
