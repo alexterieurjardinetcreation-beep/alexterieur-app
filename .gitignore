@@ -1,0 +1,19 @@
+.claude/
+.vercel/
+.vercel
+node_modules/
+*.bat
+CLAUDE.md
+améliorations-en-attente.md
+améliorations-historique.md
+nettoyer.html
+*.log
+*.tmp
+*.bak
+.DS_Store
+Thumbs.db
+bit mat.jpg
+plattard.jpg
+plattard numero 162551197.jpg
+tarif 2.jpg
+tarif 3.jpg

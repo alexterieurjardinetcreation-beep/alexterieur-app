@@ -1,0 +1,26 @@
+{
+  "name": "Grille Tarifaire - E.I Alex'terieur",
+  "short_name": "Tarifs",
+  "description": "Application de gestion de grille tarifaire, devis et rentabilité pour paysagiste",
+  "start_url": "grille-tarifaire.html",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f4f6f4",
+  "theme_color": "#5ba241",
+  "lang": "fr",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
