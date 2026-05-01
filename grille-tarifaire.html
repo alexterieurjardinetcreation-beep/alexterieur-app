@@ -636,6 +636,150 @@
     .header-sync { display: none; }
   }
 
+  /* ── PAGE ACCUEIL ── */
+  .accueil-greeting {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--green-dark);
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .accueil-section {
+    background: var(--white);
+    border-radius: 12px;
+    padding: 16px 18px;
+    margin-bottom: 14px;
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border);
+  }
+  .accueil-section-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .accueil-chantier-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    background: var(--green-light);
+    border: 1px solid #c6e0b8;
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: box-shadow .15s;
+  }
+  .accueil-chantier-card:hover { box-shadow: 0 3px 10px rgba(0,0,0,.1); }
+  .accueil-chantier-card.active-timer {
+    background: #f4fff0;
+    border-color: #2ecc71;
+  }
+  .accueil-chantier-title {
+    font-weight: 700;
+    font-size: 15px;
+    color: var(--text);
+    line-height: 1.2;
+  }
+  .accueil-chantier-meta {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 3px;
+  }
+  .accueil-chantier-actions {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+  .accueil-empty {
+    color: var(--text-muted);
+    font-size: 13px;
+    padding: 8px 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .accueil-alerte-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: 0 8px 8px 0;
+    font-size: 13px;
+    margin-bottom: 6px;
+    cursor: pointer;
+  }
+  .accueil-alerte-urgent { background: #fff0f0; border-left: 3px solid #e74c3c; }
+  .accueil-alerte-warning { background: #fff8ec; border-left: 3px solid #e67e22; }
+  .accueil-alerte-info { background: #f0f7ff; border-left: 3px solid #2980b9; }
+  .accueil-kpis {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+  .accueil-kpi {
+    padding: 12px 14px;
+    background: #fafcf7;
+    border: 1px solid #e0ebd5;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: transform .15s, box-shadow .15s;
+  }
+  .accueil-kpi:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,.08); }
+  .accueil-kpi-label { font-size: 11px; color: #666; text-transform: uppercase; margin-bottom: 4px; }
+  .accueil-kpi-value { font-size: 20px; font-weight: 700; line-height: 1.2; }
+  .accueil-kpi-sub { font-size: 11px; color: #888; margin-top: 2px; }
+  .accueil-actions-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+  }
+  .accueil-action-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 16px 8px;
+    background: var(--white);
+    border: 1.5px solid var(--border);
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    cursor: pointer;
+    min-height: 72px;
+    transition: background .15s, border-color .15s, transform .15s;
+    text-align: center;
+    line-height: 1.3;
+  }
+  .accueil-action-btn:hover {
+    background: var(--green-light);
+    border-color: var(--green);
+    transform: translateY(-1px);
+  }
+  .accueil-action-btn .ab-icon { font-size: 22px; }
+  .accueil-timer-live {
+    font-weight: 700;
+    color: #27ae60;
+    font-size: 13px;
+  }
+  @media (max-width: 480px) {
+    .accueil-actions-grid { grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .accueil-action-btn { padding: 14px 6px; font-size: 11px; min-height: 68px; }
+    .accueil-kpis { gap: 8px; }
+    .accueil-greeting { font-size: 17px; }
+  }
+
   /* Print — devis */
   @media print {
     header, .tabs, .toolbar, .cat-actions, .col-actions, .add-row,
@@ -827,8 +971,9 @@
     </div>
   </div>
 
-  <!-- Barre d'onglets principale (8 onglets) -->
+  <!-- Barre d'onglets principale (9 onglets) -->
   <div class="tabs">
+    <button class="tab active" data-page="accueil" onclick="showPage('accueil')"><span class="tab-icon">🏠</span>Accueil</button>
     <button class="tab" data-page="chantiers" onclick="showPage('chantiers')"><span class="tab-icon">🏗️</span>Chantiers</button>
     <button class="tab" data-page="stock" onclick="showPage('stock')"><span class="tab-icon">📦</span>Stock</button>
     <button class="tab" data-page="achats" onclick="showPage('achats')"><span class="tab-icon">🛒</span>Achats</button>
@@ -1220,8 +1365,13 @@
     </div>
   </div>
 
-  <!-- PAGE CHANTIERS (page d'accueil) -->
-  <div id="page-chantiers" class="page active">
+  <!-- PAGE ACCUEIL (tableau de bord épuré) -->
+  <div id="page-accueil" class="page active">
+    <div id="accueil-content"></div>
+  </div>
+
+  <!-- PAGE CHANTIERS -->
+  <div id="page-chantiers" class="page">
 
     <!-- Tableau de bord (KPIs) — EN HAUT -->
     <div class="card" id="dashboard-card">
@@ -1858,7 +2008,7 @@ const DEFAULT_DATA = {
 };
 
 let data = loadData();
-let currentPage = 'chantiers';
+let currentPage = 'accueil';
 let newPrestaLines = [];
 let chantierStatutFilter = '';
 let chatState = { step: 0, context: {} };
@@ -2016,10 +2166,10 @@ const PAGE_PARENT = {
 const _subCurrent = { business: 'compta', catalogue: 'grille' };
 
 function showPage(page) {
-  // Mode ouvrier : seules pages autorisées = chantiers + parametres
+  // Mode ouvrier : seules pages autorisées = accueil + chantiers + parametres
   if (typeof isWorker === 'function' && isWorker()) {
-    if (page !== 'chantiers' && page !== 'parametres') {
-      page = 'chantiers';
+    if (page !== 'accueil' && page !== 'chantiers' && page !== 'parametres') {
+      page = 'accueil';
     }
   }
   // Si page cachée, rediriger vers la page wrapper + sous-onglet
@@ -2039,6 +2189,7 @@ function showPage(page) {
   if (tabEl) tabEl.classList.add('active');
 
   // Rendu selon la page
+  if (page === 'accueil') renderAccueilPage();
   if (page === 'chantiers') renderChantiers();
   if (page === 'assistant') renderAssistant();
   if (page === 'devis') renderDevisPage();
@@ -8352,6 +8503,293 @@ function renderRecapSemaine() {
   `;
 }
 
+/* ============ PAGE ACCUEIL ============ */
+
+function renderAccueilPage() {
+  const el = document.getElementById('accueil-content');
+  if (!el) return;
+
+  // --- Greeting ---
+  const now = new Date();
+  const jours = ['dimanche','lundi','mardi','mercredi','jeudi','vendredi','samedi'];
+  const mois = ['janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre'];
+  const greetingText = jours[now.getDay()] + ' ' + now.getDate() + ' ' + mois[now.getMonth()];
+  const heure = now.getHours();
+  const salut = heure < 12 ? 'Bonjour' : heure < 18 ? 'Bon après-midi' : 'Bonsoir';
+
+  // --- Chantiers du jour ---
+  const todayStr = now.toISOString().slice(0, 10);
+  const chantiers = data.chantiers || [];
+  const chantiersAujourdhui = chantiers.filter(ch => ch.date === todayStr && (ch.statut || 'en_cours') !== 'cloture');
+
+  let todayHTML = '';
+  if (chantiersAujourdhui.length === 0) {
+    todayHTML = `<div class="accueil-empty">✨ Pas de chantier prévu aujourd'hui</div>`;
+  } else {
+    todayHTML = chantiersAujourdhui.map(ch => {
+      const nom = escapeHtml(ch.client || (data.clients.find(c => c.id === ch.clientId) || {}).name || '?');
+      const adresse = ch.adresse || '';
+      const isActive = !!ch.activeSession;
+      const cardClass = isActive ? 'accueil-chantier-card active-timer' : 'accueil-chantier-card';
+      const gpsBtn = adresse ? `<button class="btn-secondary btn-small" onclick="event.stopPropagation(); window.open('https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent('${adresse.replace(/'/g,"\\'")}'),'_blank')" title="Ouvrir dans Maps">📍 GPS</button>` : '';
+      let timerBtn = '';
+      if (isActive) {
+        const startMs = new Date(ch.activeSession.start).getTime();
+        const durH = ((Date.now() - startMs) / 3600000);
+        const hh = Math.floor(durH);
+        const mm = Math.floor((durH - hh) * 60);
+        const timerStr = (hh > 0 ? hh + 'h' : '') + String(mm).padStart(2,'0') + 'min';
+        timerBtn = `<span class="accueil-timer-live" id="accueil-timer-live-${ch.id}">⏱ ${timerStr}</span><button class="btn-danger btn-small" onclick="event.stopPropagation(); timerStopSession('${ch.id}'); setTimeout(renderAccueilPage, 100);">&#9632; Arrêter</button>`;
+      } else {
+        timerBtn = `<button class="btn-add btn-small" onclick="event.stopPropagation(); timerStartSession('${ch.id}'); setTimeout(renderAccueilPage, 100);">&#9654; Démarrer</button>`;
+      }
+      const typeBadge = ch.type === 'babad' ? `<span style="font-size:10px; font-weight:700; padding:2px 7px; border-radius:10px; background:#e8f1f9; color:#2980b9; text-transform:uppercase; margin-left:6px;">BABAD</span>` : '';
+      return `
+        <div class="${cardClass}" onclick="showPage('chantiers'); setTimeout(()=>viewChantier('${ch.id}'),150);">
+          <div style="flex:1; min-width:0;">
+            <div class="accueil-chantier-title">${nom}${typeBadge}</div>
+            ${adresse ? `<div class="accueil-chantier-meta">📍 ${escapeHtml(adresse)}</div>` : ''}
+            ${ch.notes ? `<div class="accueil-chantier-meta" style="margin-top:2px; font-style:italic;">${escapeHtml(ch.notes.slice(0,60))}${ch.notes.length > 60 ? '…' : ''}</div>` : ''}
+          </div>
+          <div class="accueil-chantier-actions">${gpsBtn}${timerBtn}</div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  // --- Alertes (réutilise la logique de renderChantiersAlertes) ---
+  const alertes = _computeAlertesAccueil();
+  let alertesHTML = '';
+  if (alertes.length > 0) {
+    alertesHTML = alertes.map(a => {
+      const cls = a.level === 'urgent' ? 'accueil-alerte-urgent' : a.level === 'warning' ? 'accueil-alerte-warning' : 'accueil-alerte-info';
+      return `<div class="accueil-alerte-row ${cls}" ${a.action || ''}>
+        <span style="font-size:16px; flex-shrink:0;">${a.icon}</span>
+        <span>${a.text}</span>
+      </div>`;
+    }).join('');
+  }
+
+  // --- KPIs (réutilise les calculs du dashboard) ---
+  const { start: monthStart, end: monthEnd } = getMonthBounds();
+  const chantiersMois = chantiers.filter(ch => isChantierInRange(ch, monthStart, monthEnd));
+  const caMois = chantiersMois.reduce((s, ch) => s + chantierRevenueFor(ch), 0);
+
+  const chantiersClosMois = chantiersMois.filter(ch => (ch.statut || 'en_cours') === 'cloture');
+  const marges = chantiersClosMois.map(chantierMargePercent).filter(v => v !== null && !isNaN(v));
+  const margeMoy = marges.length > 0 ? (marges.reduce((s, v) => s + v, 0) / marges.length) : null;
+  const cible = data.targetMarginPercent || 35;
+  let margeColor = '#888'; let margeText = '—';
+  if (margeMoy !== null) {
+    margeText = `${margeMoy.toFixed(0)}%`;
+    margeColor = margeMoy >= cible ? '#27ae60' : margeMoy >= 20 ? '#e67e22' : '#e74c3c';
+  }
+
+  const heuresMois = chantiersMois.reduce((s, ch) => s + (ch.hours || 0), 0);
+
+  const today2 = new Date(); today2.setHours(0,0,0,0);
+  const future = chantiers.filter(ch => {
+    if (!ch.date) return false;
+    const stat = ch.statut || 'en_cours';
+    if (stat !== 'planifie' && stat !== 'en_cours') return false;
+    const d = new Date(ch.date + 'T00:00:00');
+    return d > today2;
+  }).sort((a, b) => new Date(a.date) - new Date(b.date));
+  const prochain = future[0] || null;
+  let prochainLabel = 'Aucun planifié';
+  let prochainSub = '';
+  let prochainClick = '';
+  if (prochain) {
+    const nomCl = prochain.client || (data.clients.find(c => c.id === prochain.clientId) || {}).name || '?';
+    prochainLabel = (nomCl.length > 18 ? nomCl.slice(0,17) + '…' : nomCl);
+    const d = new Date(prochain.date + 'T00:00:00');
+    const diff = Math.round((d - today2) / (1000*60*60*24));
+    const dateFmt = d.getDate() + '/' + (d.getMonth()+1);
+    prochainSub = diff === 1 ? 'Demain · ' + dateFmt : 'Dans ' + diff + 'j · ' + dateFmt;
+    prochainClick = `onclick="showPage('chantiers'); setTimeout(()=>viewChantier('${prochain.id}'),150);"`;
+  }
+
+  // --- Render final ---
+  const showPatron = typeof isPatron !== 'function' || isPatron();
+  const kpisSection = showPatron ? `
+    <div class="accueil-section">
+      <div class="accueil-section-title">📊 Ce mois-ci</div>
+      <div class="accueil-kpis">
+        <div class="accueil-kpi" onclick="showPage('chantiers')">
+          <div class="accueil-kpi-label">💰 CA</div>
+          <div class="accueil-kpi-value" style="color:#3d6f28;">${caMois > 0 ? caMois.toFixed(0) + ' €' : '—'}</div>
+          <div class="accueil-kpi-sub">${chantiersMois.length} chantier${chantiersMois.length > 1 ? 's' : ''}</div>
+        </div>
+        <div class="accueil-kpi" onclick="showPage('business')">
+          <div class="accueil-kpi-label">📈 Marge</div>
+          <div class="accueil-kpi-value" style="color:${margeColor};">${margeText}</div>
+          <div class="accueil-kpi-sub">Cible ${cible}%</div>
+        </div>
+        <div class="accueil-kpi" onclick="showPage('chantiers')">
+          <div class="accueil-kpi-label">⏱ Heures</div>
+          <div class="accueil-kpi-value" style="color:#2980b9;">${heuresMois > 0 ? heuresMois + 'h' : '—'}</div>
+          <div class="accueil-kpi-sub">ce mois</div>
+        </div>
+        <div class="accueil-kpi" ${prochainClick} style="${prochain ? 'cursor:pointer;' : ''}">
+          <div class="accueil-kpi-label">📅 Prochain</div>
+          <div class="accueil-kpi-value" style="color:#2980b9; font-size:15px;">${escapeHtml(prochainLabel)}</div>
+          <div class="accueil-kpi-sub">${prochainSub}</div>
+        </div>
+      </div>
+    </div>
+  ` : '';
+
+  el.innerHTML = `
+    <div class="accueil-greeting">👋 ${salut} Alex &nbsp;<span style="font-size:14px; font-weight:400; color:#888;">${greetingText}</span></div>
+
+    <div class="accueil-section">
+      <div class="accueil-section-title">📅 Aujourd'hui</div>
+      <div id="accueil-today-list">${todayHTML}</div>
+      <div id="accueil-today-agenda" style="margin-top:${chantiersAujourdhui.length > 0 ? '10px' : '0'};">
+        <div style="font-size:11px; color:#aaa; margin-bottom:6px; font-weight:600; text-transform:uppercase; letter-spacing:.04em;">Agenda Google</div>
+        <div id="accueil-agenda-content"><div style="color:#aaa; font-size:12px;">Chargement agenda…</div></div>
+      </div>
+    </div>
+
+    ${alertes.length > 0 ? `
+    <div class="accueil-section">
+      <div class="accueil-section-title">🚨 Alertes</div>
+      ${alertesHTML}
+    </div>` : ''}
+
+    ${kpisSection}
+
+    <div class="accueil-section">
+      <div class="accueil-section-title">⚡ Actions rapides</div>
+      <div class="accueil-actions-grid">
+        <button class="accueil-action-btn" onclick="openModalAddChantier()">
+          <span class="ab-icon">🏗️</span>+ Chantier
+        </button>
+        <button class="accueil-action-btn" onclick="showPage('achats')">
+          <span class="ab-icon">🛒</span>+ Achat
+        </button>
+        <button class="accueil-action-btn" onclick="_accueilPhotoChantier()">
+          <span class="ab-icon">📷</span>+ Photo
+        </button>
+      </div>
+    </div>
+  `;
+
+  // Charger l'agenda Google de manière asynchrone si disponible
+  _accueilLoadAgenda();
+
+  // Lancer le timer live si un chantier du jour est en cours
+  _accueilStartTimerLive();
+}
+
+function _computeAlertesAccueil() {
+  const alertes = [];
+  const chantiers = data.chantiers || [];
+  // 1. Impayés
+  const impayes = chantiers.filter(ch => (ch.statut || 'en_cours') === 'cloture' && ch.paid === false);
+  if (impayes.length > 0) {
+    const total = impayes.reduce((s, ch) => { try { return s + (computeChantierStats(ch).revenue || 0); } catch(e) { return s + (ch.montantHT || 0); } }, 0);
+    alertes.push({ level: 'urgent', icon: '💸', text: `${impayes.length} facture${impayes.length > 1 ? 's' : ''} impayée${impayes.length > 1 ? 's' : ''} — ${total.toFixed(0)} € à relancer`, action: `onclick="showPage('chantiers')"` });
+  }
+  // 2. Stock bas
+  const stockBas = (data.stock || []).filter(item => (item.qty || 0) <= (item.alertThreshold !== undefined ? item.alertThreshold : 1));
+  if (stockBas.length > 0) {
+    const exemples = stockBas.slice(0, 2).map(i => escapeHtml(i.desc || 'article')).join(', ');
+    alertes.push({ level: 'warning', icon: '📦', text: `${stockBas.length} article${stockBas.length > 1 ? 's' : ''} stock bas (${exemples}${stockBas.length > 2 ? '…' : ''})`, action: `onclick="showPage('stock')"` });
+  }
+  // 3. Avis Google à demander
+  const now = Date.now();
+  const sansAvis = chantiers.filter(ch => {
+    if ((ch.statut || '') !== 'cloture' || ch.avisGoogleDemande || !ch.date) return false;
+    const diffDays = (now - new Date(ch.date + 'T00:00:00').getTime()) / (1000*60*60*24);
+    return diffDays > 3 && diffDays < 60;
+  });
+  if (sansAvis.length > 0) {
+    alertes.push({ level: 'info', icon: '⭐', text: `${sansAvis.length} client${sansAvis.length > 1 ? 's' : ''} à relancer pour un avis Google`, action: `onclick="showPage('chantiers')"` });
+  }
+  return alertes;
+}
+
+let _accueilTimerInterval = null;
+function _accueilStartTimerLive() {
+  if (_accueilTimerInterval) { clearInterval(_accueilTimerInterval); _accueilTimerInterval = null; }
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const actifs = (data.chantiers || []).filter(ch => ch.date === todayStr && ch.activeSession);
+  if (actifs.length === 0) return;
+  _accueilTimerInterval = setInterval(() => {
+    actifs.forEach(ch => {
+      const el = document.getElementById('accueil-timer-live-' + ch.id);
+      if (!el) { clearInterval(_accueilTimerInterval); _accueilTimerInterval = null; return; }
+      const durH = (Date.now() - new Date(ch.activeSession.start).getTime()) / 3600000;
+      const hh = Math.floor(durH);
+      const mm = Math.floor((durH - hh) * 60);
+      const ss = Math.floor(((durH - hh) * 60 - mm) * 60);
+      el.textContent = '⏱ ' + (hh > 0 ? hh + 'h' : '') + String(mm).padStart(2,'0') + ':' + String(ss).padStart(2,'0');
+    });
+  }, 1000);
+}
+
+async function _accueilLoadAgenda() {
+  const el = document.getElementById('accueil-agenda-content');
+  if (!el) return;
+  if (typeof googleIsConnected !== 'function' || !googleIsConnected()) {
+    el.innerHTML = `<div style="color:#aaa; font-size:12px;">🔌 Connecte Google pour voir ton agenda.</div>`;
+    return;
+  }
+  el.innerHTML = `<div style="color:#aaa; font-size:12px;">🔄 Chargement…</div>`;
+  try {
+    const events = await fetchTodayCalendarEvents(false);
+    if (!events || events.length === 0) {
+      el.innerHTML = `<div style="color:#aaa; font-size:12px;">Rien dans l'agenda aujourd'hui.</div>`;
+      return;
+    }
+    el.innerHTML = events.map(ev => {
+      const cls = classifyAgendaEvent(ev);
+      const timeRange = getEventTimeRange(ev);
+      const title = escapeHtml(ev.summary || '(Sans titre)');
+      const activeCh = findActiveChantierForEvent(ev.id);
+      const isActive = !!activeCh;
+      const safeId = String(ev.id).replace(/'/g, "\\'");
+      const badgeBg = cls.type === 'babad' ? '#e8f1f9' : cls.type === 'chantier' ? '#eaf4e3' : '#f0f0f0';
+      let timerBtn = '';
+      if (isActive) {
+        timerBtn = `<button class="btn-danger btn-small" onclick="stopTimerFromGoogleEvent('${safeId}'); setTimeout(renderAccueilPage,100);">&#9632; Arrêter</button>`;
+      } else {
+        const t = cls.type === 'babad' ? 'babad' : cls.type === 'chantier' ? 'chantier' : 'autre';
+        timerBtn = `<button class="btn-add btn-small" onclick="startTimerFromGoogleEvent('${safeId}', null, '${t}'); setTimeout(renderAccueilPage,100);">&#9654; Démarrer</button>`;
+      }
+      const loc = ev.location ? `<div style="font-size:11px; color:#888;">📍 ${escapeHtml(ev.location)}</div>` : '';
+      const highlight = isActive ? 'border:2px solid #2ecc71; background:#f4faf0;' : 'border:1px solid #e0e0e0; background:#fff;';
+      return `<div style="${highlight} border-radius:8px; padding:10px 12px; margin-bottom:6px;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px; flex-wrap:wrap;">
+          <div style="flex:1; min-width:0;">
+            <div style="display:flex; align-items:center; gap:6px; margin-bottom:2px; flex-wrap:wrap;">
+              <span style="font-size:10px; font-weight:700; padding:2px 7px; border-radius:10px; background:${badgeBg}; color:${cls.color}; text-transform:uppercase;">${cls.label}</span>
+              <span style="font-weight:600; font-size:14px;">${title}</span>
+            </div>
+            <div style="font-size:12px; color:#666;">⏰ ${timeRange}</div>
+            ${loc}
+          </div>
+          <div style="display:flex; gap:6px; align-items:center; flex-shrink:0;">${timerBtn}</div>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    el.innerHTML = `<div style="color:#aaa; font-size:12px;">Impossible de charger l'agenda.</div>`;
+  }
+}
+
+function _accueilPhotoChantier() {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const actif = (data.chantiers || []).find(ch => ch.date === todayStr && (ch.statut || 'en_cours') !== 'cloture');
+  if (actif) {
+    showPage('chantiers');
+    setTimeout(() => viewChantier(actif.id), 150);
+  } else {
+    showPage('chantiers');
+  }
+}
+
 /* ============ DASHBOARD KPIs ============ */
 
 function getMonthBounds(refDate) {
@@ -10734,9 +11172,12 @@ function googleOnLoginSuccess() {
   googleDrivePullIfNewer();
   // 2) Charger la liste des agendas Google pour le selecteur
   setTimeout(() => googleLoadCalendarsList(), 300);
-  // 3) Rafraîchir l'agenda du jour si on est sur l'onglet Chantiers
+  // 3) Rafraîchir l'agenda du jour si on est sur l'onglet Chantiers ou Accueil
   if (currentPage === 'chantiers' && typeof renderTodayAgenda === 'function') {
     setTimeout(() => renderTodayAgenda(true), 800);
+  }
+  if (currentPage === 'accueil' && typeof renderAccueilPage === 'function') {
+    setTimeout(() => renderAccueilPage(), 800);
   }
 }
 
@@ -10831,10 +11272,11 @@ initBackup();
     pgMarketing.style.display = '';
     busMarketing.appendChild(pgMarketing);
   }
-  // Activer l'onglet Chantiers au démarrage
-  const tabChantiers = document.querySelector('.tab[data-page="chantiers"]');
-  if (tabChantiers) tabChantiers.classList.add('active');
-  renderChantiers();
+  // Activer l'onglet Accueil au démarrage
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  const tabAccueil = document.querySelector('.tab[data-page="accueil"]');
+  if (tabAccueil) tabAccueil.classList.add('active');
+  renderAccueilPage();
 })();
 
 // Lien magique Google Agenda : ?chantier=ID[&action=start]
@@ -12060,9 +12502,9 @@ function applyUserModeUI() {
   // Cacher carte "Ouvriers" si pas patron
   const cardKW = document.getElementById('card-known-workers');
   if (cardKW) cardKW.style.display = (worker || !data.currentUser) ? 'none' : '';
-  // Si ouvrier et page actuelle interdite, forcer chantiers
-  if (worker && currentPage !== 'chantiers' && currentPage !== 'parametres') {
-    showPage('chantiers');
+  // Si ouvrier et page actuelle interdite, forcer accueil
+  if (worker && currentPage !== 'accueil' && currentPage !== 'chantiers' && currentPage !== 'parametres') {
+    showPage('accueil');
   }
   // Re-render fiche détail si ouvert (pour afficher/masquer prix)
   if (typeof renderChantiers === 'function' && currentPage === 'chantiers') {
