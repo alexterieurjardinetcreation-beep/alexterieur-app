@@ -1250,6 +1250,10 @@
   </div>
 
   <!-- PAGE ASSISTANT -->
+  <div id="page-marketing" class="page">
+    <div id="marketing-content"></div>
+  </div>
+
   <div id="page-assistant" class="page">
     <div class="card">
       <h3>Paramètres de rentabilité</h3>
@@ -8427,6 +8431,609 @@ initBackup();
     saveData();
   }
 })();
+
+// ============================================================
+// MODULE MARKETING (Google Business + photos + avis)
+// ============================================================
+
+function getCurrentISOWeek() {
+  // Format YYYY-Www (ex: 2026-W18)
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  // Jeudi de la semaine ISO
+  d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
+  const week1 = new Date(d.getFullYear(), 0, 4);
+  const weekNum = 1 + Math.round(((d - week1) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7);
+  return d.getFullYear() + '-W' + String(weekNum).padStart(2, '0');
+}
+
+function ensureMarketingData() {
+  if (!data.marketing) {
+    data.marketing = {
+      gbpUrl: '', gbpReviewUrl: '', gbpReviewCount: 0, gbpRating: 0, weeklyTasksDone: {}
+    };
+  }
+  if (!data.marketing.weeklyTasksDone) data.marketing.weeklyTasksDone = {};
+}
+
+function updateMarketingField(field, val) {
+  ensureMarketingData();
+  if (field === 'gbpReviewCount' || field === 'gbpRating') {
+    data.marketing[field] = parseFloat(val) || 0;
+  } else {
+    data.marketing[field] = val || '';
+  }
+  saveData();
+  renderMarketingPage();
+}
+
+function toggleWeeklyTask(taskKey) {
+  ensureMarketingData();
+  const week = getCurrentISOWeek();
+  if (!data.marketing.weeklyTasksDone[week]) data.marketing.weeklyTasksDone[week] = [];
+  const list = data.marketing.weeklyTasksDone[week];
+  const idx = list.indexOf(taskKey);
+  if (idx >= 0) list.splice(idx, 1);
+  else list.push(taskKey);
+  saveData();
+  renderMarketingPage();
+}
+
+function isWeeklyTaskDone(taskKey) {
+  ensureMarketingData();
+  const week = getCurrentISOWeek();
+  const list = data.marketing.weeklyTasksDone[week] || [];
+  return list.includes(taskKey);
+}
+
+function copyToClipboard(text, msg) {
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text).then(
+      () => toast(msg || 'Copie !'),
+      () => fallbackCopy(text, msg)
+    );
+  } else {
+    fallbackCopy(text, msg);
+  }
+}
+
+function fallbackCopy(text, msg) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); toast(msg || 'Copie !'); }
+  catch(e) { toast('Copie manuelle requise'); }
+  document.body.removeChild(ta);
+}
+
+function downloadPhotoFromDataUrl(dataUrl, filename) {
+  const a = document.createElement('a');
+  a.href = dataUrl;
+  a.download = filename || 'photo.jpg';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+function downloadQRCode(url, filename) {
+  if (!url) { toast('Renseigne d\'abord l\'URL avis'); return; }
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=600x600&margin=20&data=${encodeURIComponent(url)}`;
+  // Forcer le téléchargement via fetch + blob (sinon ouvre une nouvelle fenêtre)
+  fetch(qrUrl).then(r => r.blob()).then(blob => {
+    const u = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = u;
+    a.download = filename || 'qr-code-avis-google.png';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(u);
+    toast('QR code telecharge');
+  }).catch(() => {
+    // Fallback : ouvrir dans nouvel onglet
+    window.open(qrUrl, '_blank');
+  });
+}
+
+function getAllChantierPhotos() {
+  // Renvoie [{photo, ch, photoIdx}]
+  const out = [];
+  (data.chantiers || []).forEach(ch => {
+    (ch.photos || []).forEach((ph, idx) => {
+      out.push({ photo: ph, chantier: ch, photoIdx: idx });
+    });
+  });
+  // Plus récentes en premier (date du chantier ou ID du timestamp)
+  out.sort((a, b) => {
+    const ta = a.photo.id ? parseInt((a.photo.id.match(/ph_(\d+)/) || [0,0])[1]) : 0;
+    const tb = b.photo.id ? parseInt((b.photo.id.match(/ph_(\d+)/) || [0,0])[1]) : 0;
+    return tb - ta;
+  });
+  return out;
+}
+
+function countPhotosPublishedThisMonth() {
+  const now = new Date();
+  const startMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  let count = 0;
+  (data.chantiers || []).forEach(ch => {
+    (ch.photos || []).forEach(ph => {
+      if (ph.publishedAt && ph.publishedAt >= startMonth) count++;
+    });
+  });
+  return count;
+}
+
+function countReviewRequestsThisMonth() {
+  const now = new Date();
+  const startMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  let count = 0;
+  (data.chantiers || []).forEach(ch => {
+    if (ch.reviewRequest && ch.reviewRequest.sentAt && ch.reviewRequest.sentAt >= startMonth) count++;
+  });
+  return count;
+}
+
+function getRecentClosedChantiers() {
+  // Retourne chantiers cloturés depuis < 30 jours (pour avoir un peu de marge sur la liste)
+  const now = Date.now();
+  const limit = 30 * 24 * 3600 * 1000;
+  return (data.chantiers || []).filter(ch => {
+    if (ch.statut !== 'cloture') return false;
+    if (!ch.clotureDate) return false;
+    return (now - ch.clotureDate) <= limit;
+  }).sort((a, b) => (b.clotureDate || 0) - (a.clotureDate || 0));
+}
+
+function renderMarketingPage() {
+  ensureMarketingData();
+  const container = document.getElementById('marketing-content');
+  if (!container) return;
+  const m = data.marketing;
+  const photosAll = getAllChantierPhotos();
+  const photosPubMonth = countPhotosPublishedThisMonth();
+  const reviewsThisMonth = countReviewRequestsThisMonth();
+  const recentClosed = getRecentClosedChantiers();
+
+  // Dashboard hebdo
+  const weeklyTasks = [
+    { key: 'photo_fb', label: 'Publier 1 photo récente sur Facebook' },
+    { key: 'avis_2', label: 'Demander 2 avis Google aux clients récents' },
+    { key: 'reponse_avis', label: 'Répondre aux nouveaux avis Google' },
+    { key: 'horaires', label: 'Mettre à jour les horaires (si congés à venir)' },
+    { key: 'post_google', label: 'Poster un "post Google" sur ton profil' }
+  ];
+  const tasksDone = weeklyTasks.filter(t => isWeeklyTaskDone(t.key)).length;
+
+  // Suggestions intelligentes
+  const tips = [];
+  if (!m.gbpUrl) {
+    tips.push({ icon: '🟧', txt: 'Tu n\'as pas encore renseigné ton profil Google Business. C\'est <b>LE</b> levier le plus puissant pour les paysagistes locaux.' });
+  }
+  if (m.gbpReviewCount < 5) {
+    tips.push({ icon: '⭐', txt: 'Ton 1er objectif : <b>passer la barre des 5 avis</b>. Demande-en aux 5 derniers clients satisfaits, c\'est le déclic.' });
+  }
+  // Chantiers cloturés sans demande d'avis
+  const sansAvis = recentClosed.filter(ch => !ch.reviewRequest || !ch.reviewRequest.sentAt);
+  if (sansAvis.length > 0) {
+    const noms = sansAvis.slice(0, 3).map(ch => {
+      const cl = data.clients.find(c => c.id === ch.clientId);
+      return cl ? cl.name : (ch.client || '?');
+    }).join(', ');
+    tips.push({ icon: '📩', txt: `Pense à demander un avis à : <b>${escapeHtml(noms)}</b>${sansAvis.length > 3 ? ' (+' + (sansAvis.length - 3) + ' autres)' : ''}.` });
+  }
+  // Photo non publiée depuis 14j
+  const lastPubli = photosAll
+    .filter(p => p.photo.publishedAt)
+    .reduce((max, p) => Math.max(max, p.photo.publishedAt || 0), 0);
+  if (photosAll.length > 0 && (Date.now() - lastPubli) > 14 * 24 * 3600 * 1000) {
+    tips.push({ icon: '📷', txt: 'Pas de photo publiée depuis 2 semaines. Tes prospects veulent voir ton travail !' });
+  }
+  if (m.gbpRating >= 4.5 && m.gbpReviewCount >= 5) {
+    tips.push({ icon: '🏆', txt: `Tu as une super note (${m.gbpRating}/5 sur ${m.gbpReviewCount} avis) ! Mets-la en avant sur Facebook et tes devis.` });
+  }
+  if (tips.length === 0) {
+    tips.push({ icon: '✅', txt: 'Tout roule. Continue comme ça !' });
+  }
+
+  // Couleur de la note
+  const ratingColor = m.gbpRating >= 4.5 ? '#27ae60' : (m.gbpRating >= 4 ? '#f39c12' : '#aaa');
+
+  container.innerHTML = `
+    <!-- Dashboard de la semaine -->
+    <div class="card" style="background:linear-gradient(135deg, #f0f7eb, #fff); border-left:4px solid #5ba241;">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+        <h3 style="margin:0;">📊 Cette semaine</h3>
+        <span style="font-size:13px; color:#666;">${tasksDone}/${weeklyTasks.length} tâches faites</span>
+      </div>
+
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:10px; margin-bottom:14px;">
+        <div style="background:#fff; padding:10px; border-radius:8px; border:1px solid #eee; text-align:center;">
+          <div style="font-size:11px; color:#888; text-transform:uppercase;">Avis Google</div>
+          <div style="font-size:22px; font-weight:700; color:#3d6f28;">${m.gbpReviewCount || 0}</div>
+        </div>
+        <div style="background:#fff; padding:10px; border-radius:8px; border:1px solid #eee; text-align:center;">
+          <div style="font-size:11px; color:#888; text-transform:uppercase;">Note moyenne</div>
+          <div style="font-size:22px; font-weight:700; color:${ratingColor};">${m.gbpRating ? m.gbpRating.toFixed(1) + ' ★' : '—'}</div>
+        </div>
+        <div style="background:#fff; padding:10px; border-radius:8px; border:1px solid #eee; text-align:center;">
+          <div style="font-size:11px; color:#888; text-transform:uppercase;">Photos publiées</div>
+          <div style="font-size:22px; font-weight:700; color:#2980b9;">${photosPubMonth}</div>
+          <div style="font-size:10px; color:#999;">ce mois</div>
+        </div>
+        <div style="background:#fff; padding:10px; border-radius:8px; border:1px solid #eee; text-align:center;">
+          <div style="font-size:11px; color:#888; text-transform:uppercase;">Demandes avis</div>
+          <div style="font-size:22px; font-weight:700; color:#e67e22;">${reviewsThisMonth}</div>
+          <div style="font-size:10px; color:#999;">ce mois</div>
+        </div>
+      </div>
+
+      <div>
+        <div style="font-size:13px; font-weight:600; color:#3d6f28; margin-bottom:6px;">📋 Checklist de la semaine</div>
+        ${weeklyTasks.map(t => {
+          const done = isWeeklyTaskDone(t.key);
+          return `
+            <div onclick="toggleWeeklyTask('${t.key}')"
+                 style="display:flex; align-items:center; gap:8px; padding:6px 0; cursor:pointer; user-select:none;">
+              <span style="display:inline-block; width:18px; height:18px; border-radius:4px;
+                           border:2px solid ${done ? '#5ba241' : '#bbb'};
+                           background:${done ? '#5ba241' : '#fff'};
+                           color:#fff; text-align:center; line-height:14px; font-size:13px; font-weight:700;">${done ? '✓' : ''}</span>
+              <span style="font-size:14px; color:${done ? '#999' : '#333'}; text-decoration:${done ? 'line-through' : 'none'};">${escapeHtml(t.label)}</span>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    </div>
+
+    <!-- Section 1 : Google Business Profile -->
+    <div class="card">
+      <h3>🌟 Google Business Profile (Google Maps)</h3>
+      <p style="color:#666; font-size:13px; margin-top:0;">Le levier n°1 pour qu'on te trouve sur Google quand on cherche "paysagiste Mâcon".</p>
+
+      ${!m.gbpUrl ? `
+        <div style="background:#fff8e6; border:1px dashed #e67e22; border-radius:8px; padding:14px; margin-bottom:14px;">
+          <div style="font-weight:600; color:#b35900; margin-bottom:6px;">🟧 Tu n'as pas encore créé ton profil ?</div>
+          <p style="margin:6px 0; font-size:13px;">C'est gratuit et indispensable. Crée ton profil en 10 min :</p>
+          <a href="https://www.google.com/business/" target="_blank" class="btn-add btn-small" style="text-decoration:none; display:inline-block;">🚀 Créer mon profil Google Business</a>
+        </div>
+      ` : ''}
+
+      <div class="form-grid">
+        <div class="field">
+          <label>URL de mon profil Google Business</label>
+          <input type="url" placeholder="https://g.page/alex-terieur..." value="${escapeHtml(m.gbpUrl || '')}"
+                 onchange="updateMarketingField('gbpUrl', this.value)">
+        </div>
+        <div class="field">
+          <label>URL formulaire de demande d'avis</label>
+          <input type="url" placeholder="https://g.page/r/..." value="${escapeHtml(m.gbpReviewUrl || '')}"
+                 onchange="updateMarketingField('gbpReviewUrl', this.value)">
+          <div style="font-size:11px; color:#888; margin-top:3px;">Astuce : depuis ton profil GBP → "Demander des avis" → copie le lien court</div>
+        </div>
+        <div class="field">
+          <label>Nombre d'avis Google (saisie manuelle)</label>
+          <input type="number" min="0" step="1" value="${m.gbpReviewCount || 0}"
+                 onchange="updateMarketingField('gbpReviewCount', this.value)">
+        </div>
+        <div class="field">
+          <label>Note moyenne (sur 5)</label>
+          <input type="number" min="0" max="5" step="0.1" value="${m.gbpRating || 0}"
+                 onchange="updateMarketingField('gbpRating', this.value)">
+        </div>
+      </div>
+
+      ${m.gbpUrl ? `
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px;">
+          <a href="${escapeHtml(m.gbpUrl)}" target="_blank" class="btn-secondary btn-small" style="text-decoration:none;">🔗 Ouvrir mon profil</a>
+          <a href="https://business.google.com/" target="_blank" class="btn-secondary btn-small" style="text-decoration:none;">✏️ Modifier mon profil</a>
+        </div>
+      ` : ''}
+
+      ${m.gbpReviewUrl ? `
+        <div style="margin-top:18px; padding:14px; background:#f7f9f5; border-radius:8px;">
+          <div style="font-weight:600; color:#3d6f28; margin-bottom:8px;">📱 QR code "Laisser un avis"</div>
+          <p style="font-size:13px; color:#666; margin:6px 0;">À imprimer et coller sur ta facture, ton véhicule, ta carte de visite. Quand un client le scanne, il arrive direct sur le formulaire d'avis Google.</p>
+          <div style="display:flex; gap:14px; align-items:center; flex-wrap:wrap; margin-top:10px;">
+            <img src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&margin=10&data=${encodeURIComponent(m.gbpReviewUrl)}"
+                 alt="QR code avis Google" style="border:1px solid #ddd; border-radius:8px;">
+            <div>
+              <button class="btn-add btn-small" onclick="downloadQRCode('${escapeHtml(m.gbpReviewUrl)}', 'qr-avis-google.png')">📥 Télécharger le QR code</button>
+              <div style="font-size:11px; color:#888; margin-top:6px;">Format PNG 600x600 (haute résolution)</div>
+            </div>
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- Checklist d'optimisation -->
+      <div style="margin-top:18px;">
+        <div style="font-weight:600; color:#3d6f28; margin-bottom:8px;">✅ Checklist d'optimisation Google Business</div>
+        ${[
+          { key: 'gbp_photo', label: 'Photo de profil + couverture' },
+          { key: 'gbp_desc', label: 'Description complète (avec mots-clés : paysagiste, Mâcon, jardin...)' },
+          { key: 'gbp_horaires', label: 'Horaires d\'ouverture renseignés' },
+          { key: 'gbp_phone', label: 'Numéro de téléphone' },
+          { key: 'gbp_zone', label: 'Adresse / zone d\'intervention' },
+          { key: 'gbp_categorie', label: 'Catégorie principale : Paysagiste' },
+          { key: 'gbp_10photos', label: 'Au moins 10 photos publiées' },
+          { key: 'gbp_5avis', label: 'Au moins 5 avis 4-5 étoiles' },
+          { key: 'gbp_reponses', label: 'Réponse à TOUS les avis (positifs et négatifs)' },
+          { key: 'gbp_posts', label: 'Posts Google réguliers (1/mois min)' }
+        ].map(t => {
+          const done = isWeeklyTaskDone(t.key);
+          return `
+            <div onclick="toggleWeeklyTask('${t.key}')"
+                 style="display:flex; align-items:center; gap:8px; padding:5px 0; cursor:pointer; user-select:none;">
+              <span style="display:inline-block; width:16px; height:16px; border-radius:4px;
+                           border:2px solid ${done ? '#5ba241' : '#bbb'};
+                           background:${done ? '#5ba241' : '#fff'};
+                           color:#fff; text-align:center; line-height:12px; font-size:11px; font-weight:700;">${done ? '✓' : ''}</span>
+              <span style="font-size:13px; color:${done ? '#999' : '#333'}; text-decoration:${done ? 'line-through' : 'none'};">${escapeHtml(t.label)}</span>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    </div>
+
+    <!-- Section 2 : Photos chantiers -->
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+        <h3 style="margin:0;">📷 Photos chantiers à publier</h3>
+        <div style="display:flex; gap:6px;">
+          <button class="btn-secondary btn-small" id="mkt-photo-filter-all"
+                  onclick="setMarketingPhotoFilter('all')">Toutes (${photosAll.length})</button>
+          <button class="btn-secondary btn-small" id="mkt-photo-filter-new"
+                  onclick="setMarketingPhotoFilter('new')">Pas publiées (${photosAll.filter(p => !p.photo.publishedAt).length})</button>
+        </div>
+      </div>
+      <p style="color:#666; font-size:13px; margin-top:0;">Toutes tes photos terrain. Clique sur une photo pour préparer une publication Facebook (texte + photo prête).</p>
+      <div id="marketing-photos-gallery"></div>
+    </div>
+
+    <!-- Section 3 : Demandes d'avis -->
+    <div class="card">
+      <h3>⭐ Demandes d'avis automatiques</h3>
+      <p style="color:#666; font-size:13px; margin-top:0;">Liste des chantiers clôturés récemment. Le moment idéal pour demander un avis = juste après la clôture, quand le client est encore content !</p>
+      ${recentClosed.length === 0 ? `
+        <div class="empty-state">Aucun chantier clôturé récemment. Pense à passer tes chantiers en "Clôturé" dans l'onglet Chantiers pour les voir ici.</div>
+      ` : `
+        <div style="display:flex; flex-direction:column; gap:8px;">
+          ${recentClosed.map(ch => renderReviewRow(ch)).join('')}
+        </div>
+      `}
+    </div>
+
+    <!-- Section 5 : Suggestions -->
+    <div class="card" style="background:#fdf6ec; border-left:4px solid #e67e22;">
+      <h3>💡 Conseils du moment</h3>
+      <div style="display:flex; flex-direction:column; gap:10px;">
+        ${tips.map(t => `
+          <div style="display:flex; gap:10px; align-items:flex-start; padding:8px 10px; background:#fff; border-radius:6px;">
+            <span style="font-size:18px;">${t.icon}</span>
+            <span style="font-size:14px; line-height:1.5;">${t.txt}</span>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+
+  // Rendu galerie photos (avec filtre)
+  renderMarketingPhotosGallery();
+}
+
+let marketingPhotoFilter = 'all';
+
+function setMarketingPhotoFilter(f) {
+  marketingPhotoFilter = f;
+  // Highlight bouton
+  const btnAll = document.getElementById('mkt-photo-filter-all');
+  const btnNew = document.getElementById('mkt-photo-filter-new');
+  if (btnAll) btnAll.style.background = f === 'all' ? '#5ba241' : '#e8e8e8';
+  if (btnAll) btnAll.style.color = f === 'all' ? '#fff' : '#333';
+  if (btnNew) btnNew.style.background = f === 'new' ? '#5ba241' : '#e8e8e8';
+  if (btnNew) btnNew.style.color = f === 'new' ? '#fff' : '#333';
+  renderMarketingPhotosGallery();
+}
+
+function renderMarketingPhotosGallery() {
+  const gal = document.getElementById('marketing-photos-gallery');
+  if (!gal) return;
+  let photos = getAllChantierPhotos();
+  if (marketingPhotoFilter === 'new') {
+    photos = photos.filter(p => !p.photo.publishedAt);
+  }
+  if (photos.length === 0) {
+    gal.innerHTML = '<div class="empty-state">Aucune photo. Ajoute des photos depuis l\'onglet Chantiers (sur la fiche d\'un chantier).</div>';
+    return;
+  }
+  // Sync filtres style
+  setMarketingPhotoFilter(marketingPhotoFilter);
+  gal.innerHTML = `
+    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(140px, 1fr)); gap:10px; margin-top:10px;">
+      ${photos.map(p => {
+        const ch = p.chantier;
+        const cl = data.clients.find(c => c.id === ch.clientId);
+        const nomClient = cl ? cl.name : (ch.client || '?');
+        const published = !!p.photo.publishedAt;
+        return `
+          <div style="position:relative; cursor:pointer;" onclick="openMarketingPhotoModal('${ch.id}', '${p.photo.id}')">
+            <img src="${p.photo.dataUrl}" style="width:100%; height:140px; object-fit:cover; border-radius:6px; border:1px solid #ddd;">
+            ${published ? `<div style="position:absolute; top:6px; right:6px; background:#27ae60; color:#fff; padding:2px 6px; border-radius:10px; font-size:10px; font-weight:600;">✓ Publiée</div>` : ''}
+            <div style="font-size:11px; color:#666; margin-top:4px; text-align:center; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+              ${escapeHtml(nomClient)} · ${escapeHtml(p.photo.date || '')}
+            </div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+function openMarketingPhotoModal(chId, photoId) {
+  const ch = data.chantiers.find(c => c.id === chId);
+  if (!ch) return;
+  const ph = (ch.photos || []).find(p => p.id === photoId);
+  if (!ph) return;
+  const cl = data.clients.find(c => c.id === ch.clientId);
+  const ville = (cl && cl.address) ? extractCityFromAddress(cl.address) : (ch.adresse ? extractCityFromAddress(ch.adresse) : 'Mâcon');
+  const phone = (data.companyInfo && data.companyInfo.phone) || '';
+  const postText = `🌳 Aménagement réalisé chez nos clients à ${ville}.\n\nDevis gratuit${phone ? ' au ' + phone : ''}.\n\n#paysagiste #${ville.replace(/\s/g, '')} #jardin #amenagementexterieur #alexterieur`;
+
+  let overlay = document.getElementById('marketing-photo-modal');
+  if (overlay) overlay.remove();
+  overlay = document.createElement('div');
+  overlay.id = 'marketing-photo-modal';
+  overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:10000; display:flex; justify-content:center; align-items:center; padding:14px; overflow:auto;';
+  overlay.innerHTML = `
+    <div style="background:#fff; border-radius:12px; padding:18px; max-width:600px; width:100%; max-height:95vh; overflow:auto; box-shadow:0 8px 32px rgba(0,0,0,0.3); position:relative;">
+      <button onclick="document.getElementById('marketing-photo-modal').remove()"
+              style="position:absolute; top:10px; right:10px; background:#eee; border:none; border-radius:50%; width:30px; height:30px; cursor:pointer; font-size:16px;">×</button>
+      <h3 style="margin:0 0 12px;">📤 Préparer la publication</h3>
+      <img src="${ph.dataUrl}" style="width:100%; max-height:300px; object-fit:contain; border-radius:8px; background:#f5f5f5; margin-bottom:14px;">
+
+      <div style="margin-bottom:12px;">
+        <label style="font-size:13px; font-weight:600; color:#3d6f28;">Texte de post</label>
+        <textarea id="marketing-post-text" rows="6"
+                  style="width:100%; padding:10px; border:1px solid #d4d4d4; border-radius:6px; font-family:inherit; font-size:13px; margin-top:4px;">${escapeHtml(postText)}</textarea>
+      </div>
+
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;">
+        <button class="btn-add btn-small" onclick="copyMarketingPostText()">📋 Copier le texte</button>
+        <button class="btn-secondary btn-small" onclick="downloadPhotoFromDataUrl('${ph.dataUrl}', 'alexterieur-${ph.id}.jpg')">📥 Télécharger la photo</button>
+        <a href="https://www.facebook.com/" target="_blank" class="btn-secondary btn-small" style="text-decoration:none;">🔗 Ouvrir Facebook</a>
+        ${data.marketing && data.marketing.gbpUrl ? `<a href="${escapeHtml(data.marketing.gbpUrl)}" target="_blank" class="btn-secondary btn-small" style="text-decoration:none;">🔗 Google Business</a>` : ''}
+      </div>
+
+      <div style="padding:10px; background:#f7f9f5; border-radius:6px;">
+        <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:14px;">
+          <input type="checkbox" ${ph.publishedAt ? 'checked' : ''}
+                 onchange="markPhotoAsPublished('${chId}', '${photoId}', this.checked)"
+                 style="width:18px; height:18px;">
+          <span>Marquer comme <b>publiée</b></span>
+          ${ph.publishedAt ? `<span style="font-size:11px; color:#888;">(${new Date(ph.publishedAt).toLocaleDateString('fr-FR')})</span>` : ''}
+        </label>
+      </div>
+    </div>
+  `;
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  document.body.appendChild(overlay);
+}
+
+function copyMarketingPostText() {
+  const ta = document.getElementById('marketing-post-text');
+  if (!ta) return;
+  copyToClipboard(ta.value, 'Texte copie ! Colle-le sur Facebook');
+}
+
+function markPhotoAsPublished(chId, photoId, checked) {
+  const ch = data.chantiers.find(c => c.id === chId);
+  if (!ch) return;
+  const ph = (ch.photos || []).find(p => p.id === photoId);
+  if (!ph) return;
+  ph.publishedAt = checked ? Date.now() : null;
+  saveData();
+  toast(checked ? 'Photo marquee comme publiee' : 'Marquage retire');
+  // Refermer/relancer la modal pour mettre à jour
+  const overlay = document.getElementById('marketing-photo-modal');
+  if (overlay) overlay.remove();
+  openMarketingPhotoModal(chId, photoId);
+  // Refresh galerie en arrière-plan
+  renderMarketingPhotosGallery();
+}
+
+function extractCityFromAddress(addr) {
+  if (!addr) return 'Mâcon';
+  // Tente d'extraire après le code postal (5 chiffres)
+  const m = addr.match(/\d{5}\s+([^,\d]+)/);
+  if (m) return m[1].trim();
+  // Sinon prendre le dernier morceau après une virgule
+  const parts = addr.split(',').map(s => s.trim()).filter(Boolean);
+  if (parts.length > 0) {
+    const last = parts[parts.length - 1];
+    return last.replace(/\d{5}/, '').trim() || 'Mâcon';
+  }
+  return 'Mâcon';
+}
+
+function renderReviewRow(ch) {
+  const cl = data.clients.find(c => c.id === ch.clientId);
+  const nomClient = cl ? cl.name : (ch.client || '?');
+  const tel = cl ? (cl.phone || '') : '';
+  const email = cl ? (cl.email || '') : '';
+  const dateClot = ch.clotureDate ? new Date(ch.clotureDate).toLocaleDateString('fr-FR') : '-';
+  const rr = ch.reviewRequest || {};
+  const reviewUrl = (data.marketing && data.marketing.gbpReviewUrl) || '';
+  const reviewLinkPart = reviewUrl ? '\n\n' + reviewUrl : '';
+  const smsBody = `Bonjour ${nomClient},\n\nMerci pour votre confiance ! Si vous etes satisfait du chantier, pourriez-vous laisser un avis Google ? Ca nous aide enormement.${reviewLinkPart}\n\nMerci !\nAlex - Alex'terieur`;
+  const emailSubject = 'Votre avis nous aide beaucoup';
+  const emailBody = `Bonjour ${nomClient},\n\nJ'espere que vous etes satisfait(e) du chantier realise.\n\nSi c'est le cas, pourriez-vous prendre 2 minutes pour laisser un avis Google ? Ca nous aide enormement a faire connaitre l'entreprise.${reviewLinkPart}\n\nMerci d'avance pour votre soutien.\n\nA bientot,\nAlex\nE.I Alex'terieur Jardin & Creation`;
+
+  const smsHref = tel ? `sms:${tel.replace(/\s/g, '')}?body=${encodeURIComponent(smsBody)}` : '';
+  const mailHref = email ? `mailto:${email}?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}` : '';
+
+  let statutBadge = '⚪ Non envoyé';
+  let statutColor = '#aaa';
+  if (rr.received) { statutBadge = '⭐ Avis reçu'; statutColor = '#27ae60'; }
+  else if (rr.sentAt) { statutBadge = `🟢 Envoyé (${new Date(rr.sentAt).toLocaleDateString('fr-FR')})`; statutColor = '#2980b9'; }
+
+  return `
+    <div style="background:#fff; border:1px solid #eee; border-radius:8px; padding:12px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:8px;">
+        <div>
+          <div style="font-weight:600; font-size:14px;">${escapeHtml(nomClient)}</div>
+          <div style="font-size:12px; color:#888;">Clôturé le ${dateClot}${ch.adresse ? ' · ' + escapeHtml(ch.adresse) : ''}</div>
+        </div>
+        <span style="font-size:12px; color:${statutColor}; font-weight:600;">${statutBadge}</span>
+      </div>
+      <div style="display:flex; gap:6px; flex-wrap:wrap;">
+        ${tel ? `<a href="${smsHref}" class="btn-secondary btn-small" style="text-decoration:none;"
+                    onclick="markReviewSent('${ch.id}', 'sms')">📱 SMS</a>`
+              : `<button class="btn-secondary btn-small" disabled title="Pas de téléphone">📱 SMS</button>`}
+        ${email ? `<a href="${mailHref}" class="btn-secondary btn-small" style="text-decoration:none;"
+                    onclick="markReviewSent('${ch.id}', 'email')">📧 Email</a>`
+              : `<button class="btn-secondary btn-small" disabled title="Pas d'email">📧 Email</button>`}
+        <button class="btn-secondary btn-small" onclick="toggleReviewReceived('${ch.id}')">${rr.received ? '↩️ Pas reçu' : '⭐ Avis reçu'}</button>
+        ${rr.sentAt && !rr.received ? `<button class="btn-secondary btn-small" onclick="resetReviewRequest('${ch.id}')" title="Réinitialiser">🔄</button>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+function markReviewSent(chId, channel) {
+  const ch = data.chantiers.find(c => c.id === chId);
+  if (!ch) return;
+  if (!ch.reviewRequest) ch.reviewRequest = { sentAt: null, channel: null, received: false };
+  ch.reviewRequest.sentAt = Date.now();
+  ch.reviewRequest.channel = channel;
+  saveData();
+  // Pas de re-render immédiat (sinon casse la nav vers SMS/mail)
+  setTimeout(() => { if (currentPage === 'marketing') renderMarketingPage(); }, 800);
+}
+
+function toggleReviewReceived(chId) {
+  const ch = data.chantiers.find(c => c.id === chId);
+  if (!ch) return;
+  if (!ch.reviewRequest) ch.reviewRequest = { sentAt: null, channel: null, received: false };
+  ch.reviewRequest.received = !ch.reviewRequest.received;
+  saveData();
+  toast(ch.reviewRequest.received ? '⭐ Avis marque comme recu !' : 'Marquage retire');
+  renderMarketingPage();
+}
+
+function resetReviewRequest(chId) {
+  const ch = data.chantiers.find(c => c.id === chId);
+  if (!ch) return;
+  ch.reviewRequest = null;
+  saveData();
+  renderMarketingPage();
+}
+
+// ============================================================
+// FIN MODULE MARKETING
+// ============================================================
 </script>
 </body>
 </html>
