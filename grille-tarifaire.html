@@ -2919,62 +2919,184 @@ function renderChantiers() {
   }
 
   const statutLabel = { planifie: 'Planifié', en_cours: 'En cours', cloture: 'Clôturé' };
+  const isPatronMode = (typeof isPatron === 'function' && isPatron());
 
-  list.innerHTML = filtered.slice().reverse().map(ch => {
-    const s = computeChantierStats(ch);
-    const rateClass = s.effectiveHourlyRate >= target ? 'stat-ok' :
-                      s.effectiveHourlyRate >= target * 0.8 ? 'stat-warn' : 'stat-bad';
-    const varLabel = s.isBabad ? `${s.nbJours} jour(s) BABAD` :
-                     s.timeVariance > 0.1 ? `+${s.timeVariance.toFixed(1)}h` :
-                     s.timeVariance < -0.1 ? `${s.timeVariance.toFixed(1)}h` : 'OK';
-    const nomClient = escapeHtml(ch.client || (data.clients.find(cl => cl.id === ch.clientId)?.name) || '?');
-    const typeBadge = `<span class="badge-${ch.type || 'perso'}">${(ch.type || 'perso') === 'babad' ? 'BABAD' : 'Perso'}</span>`;
-    const statutBadge = `<span class="badge-${ch.statut || 'en_cours'}">${statutLabel[ch.statut || 'en_cours'] || ch.statut}</span>`;
-    const paidBadge = ((ch.statut || '') === 'cloture' && ch.paid === false)
-      ? `<span style="background:#e74c3c; color:#fff; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600;">🔴 Impayé</span>`
-      : '';
-    const isPatronMode = (typeof isPatron === 'function' && isPatron());
-    const showWeather = ((ch.statut || 'en_cours') === 'planifie') && ch.adresse && ch.date && isFutureOrToday(ch.date);
-    return `
-      <div class="chantier-item">
-        <div class="chantier-head">
-          <div>
-            <div class="chantier-title">${nomClient}${ch.devisId ? ' <span style="font-size:11px; color:#2ecc71;">depuis devis</span>' : ''}</div>
-            <div class="chantier-badges">${typeBadge} ${statutBadge} ${paidBadge}</div>
-            <div class="chantier-meta">${ch.date}${ch.adresse ? ' — ' + escapeHtml(ch.adresse) : ''} — ${ch.hours}h${(isPatronMode && ch.materialCost) ? ' — ' + ch.materialCost + '€ mat.' : ''}</div>
-            ${showWeather ? `<div class="weather-slot" id="weather-slot-${ch.id}" style="margin-top:5px; font-size:12px; color:#666;">🌦️ Chargement météo…</div>` : ''}
+  // ---- Groupement par client (clientId si dispo, sinon nom client) ----
+  const groupsMap = new Map();
+  filtered.forEach(ch => {
+    const fallbackName = ch.client || (data.clients.find(cl => cl.id === ch.clientId)?.name) || '?';
+    const key = ch.clientId || ('name:' + (fallbackName || '?').toLowerCase());
+    if (!groupsMap.has(key)) {
+      groupsMap.set(key, {
+        key,
+        clientId: ch.clientId || null,
+        name: fallbackName,
+        chantiers: []
+      });
+    }
+    groupsMap.get(key).chantiers.push(ch);
+  });
+
+  // Construire la liste des groupes avec stats agrégées
+  const groups = Array.from(groupsMap.values()).map(g => {
+    let totalRevenue = 0, totalProfit = 0, totalHours = 0;
+    let lastModified = 0;
+    g.chantiers.forEach(ch => {
+      const s = computeChantierStats(ch);
+      totalRevenue += s.revenue;
+      totalProfit += s.grossProfit;
+      totalHours += (ch.hours || 0);
+      // dernier modifié : fallback sur ch.date si pas de updatedAt
+      const ts = ch.updatedAt ? new Date(ch.updatedAt).getTime()
+                : ch.date ? new Date(ch.date + 'T00:00:00').getTime()
+                : 0;
+      if (ts > lastModified) lastModified = ts;
+    });
+    g.totalRevenue = totalRevenue;
+    g.totalProfit = totalProfit;
+    g.totalHours = totalHours;
+    g.lastModified = lastModified;
+    // Tri interne : du plus récent au plus ancien
+    g.chantiers.sort((a, b) => {
+      const ta = a.updatedAt ? new Date(a.updatedAt).getTime() : (a.date ? new Date(a.date + 'T00:00:00').getTime() : 0);
+      const tb = b.updatedAt ? new Date(b.updatedAt).getTime() : (b.date ? new Date(b.date + 'T00:00:00').getTime() : 0);
+      return tb - ta;
+    });
+    return g;
+  });
+
+  // Tri groupes par date dernière modif DESC
+  groups.sort((a, b) => b.lastModified - a.lastModified);
+
+  // Init de l'état toggle (par défaut : 1 chantier → ouvert, plusieurs → fermé)
+  if (!window._chantierGroupsExpand) window._chantierGroupsExpand = {};
+
+  list.innerHTML = groups.map(g => {
+    const nbCh = g.chantiers.length;
+    const expandKey = g.key;
+    // Default : 1 seul chantier → expanded ; plusieurs → collapsed
+    if (typeof window._chantierGroupsExpand[expandKey] === 'undefined') {
+      window._chantierGroupsExpand[expandKey] = (nbCh === 1);
+    }
+    const isExpanded = window._chantierGroupsExpand[expandKey];
+    const chevron = isExpanded ? '▼' : '▶';
+    const safeKey = String(expandKey).replace(/'/g, "\\'");
+    const nomClient = escapeHtml(g.name);
+
+    // Header de la carte client
+    const totalsHtml = isPatronMode
+      ? `<div style="font-size:12px; color:#666;">CA: <strong>${g.totalRevenue.toFixed(2)} €</strong> · Marge: <strong>${g.totalProfit.toFixed(2)} €</strong> · ${g.totalHours.toFixed(1)} h</div>`
+      : `<div style="font-size:12px; color:#666;">${g.totalHours.toFixed(1)} h travaillées</div>`;
+
+    // Liste des chantiers du groupe (visible uniquement si expanded)
+    const chantiersHtml = g.chantiers.map(ch => {
+      const s = computeChantierStats(ch);
+      const rateClass = s.effectiveHourlyRate >= target ? 'stat-ok' :
+                        s.effectiveHourlyRate >= target * 0.8 ? 'stat-warn' : 'stat-bad';
+      const varLabel = s.isBabad ? `${s.nbJours} jour(s) BABAD` :
+                       s.timeVariance > 0.1 ? `+${s.timeVariance.toFixed(1)}h` :
+                       s.timeVariance < -0.1 ? `${s.timeVariance.toFixed(1)}h` : 'OK';
+      const typeBadge = `<span class="badge-${ch.type || 'perso'}">${(ch.type || 'perso') === 'babad' ? 'BABAD' : 'Perso'}</span>`;
+      const statutBadge = `<span class="badge-${ch.statut || 'en_cours'}">${statutLabel[ch.statut || 'en_cours'] || ch.statut}</span>`;
+      const paidBadge = ((ch.statut || '') === 'cloture' && ch.paid === false)
+        ? `<span style="background:#e74c3c; color:#fff; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600;">🔴 Impayé</span>`
+        : '';
+      const showWeather = ((ch.statut || 'en_cours') === 'planifie') && ch.adresse && ch.date && isFutureOrToday(ch.date);
+      const dateAffichee = ch.date || '?';
+      const adresseHtml = ch.adresse ? ' — ' + escapeHtml(ch.adresse) : '';
+      const matHtml = (isPatronMode && ch.materialCost) ? ' — ' + ch.materialCost + '€ mat.' : '';
+      const montantInline = isPatronMode ? ` · <strong>${s.revenue.toFixed(2)} €</strong>` : '';
+
+      return `
+        <div class="chantier-item" style="margin-top:8px;">
+          <div class="chantier-head">
+            <div style="cursor:pointer;" onclick="viewChantier('${ch.id}')">
+              <div class="chantier-meta" style="font-weight:600; color:#333;">📅 ${dateAffichee} · ${statutBadge} ${paidBadge}${montantInline}</div>
+              <div class="chantier-badges" style="margin-top:4px;">${typeBadge}${ch.devisId ? ' <span style="font-size:11px; color:#2ecc71;">depuis devis</span>' : ''}</div>
+              <div class="chantier-meta">${ch.hours}h${matHtml}${adresseHtml}</div>
+              ${showWeather ? `<div class="weather-slot" id="weather-slot-${ch.id}" style="margin-top:5px; font-size:12px; color:#666;">🌦️ Chargement météo…</div>` : ''}
+            </div>
+            <div style="display:flex; gap:6px;">
+              <button class="btn-secondary btn-small" onclick="viewChantier('${ch.id}')">Ouvrir</button>
+              ${isPatronMode ? `<button class="btn-danger btn-small" onclick="removeChantier('${ch.id}')">Supprimer</button>` : ''}
+            </div>
           </div>
-          <div style="display:flex; gap:6px;">
-            <button class="btn-secondary btn-small" onclick="viewChantier('${ch.id}')">Ouvrir</button>
-            ${isPatronMode ? `<button class="btn-danger btn-small" onclick="removeChantier('${ch.id}')">Supprimer</button>` : ''}
-          </div>
+          ${isPatronMode ? `<div class="chantier-stats">
+            <div>CA : <strong>${s.revenue.toFixed(2)} €</strong></div>
+            <div>Marge : <strong>${s.grossProfit.toFixed(2)} €</strong></div>
+            ${!s.isBabad ? `<div>Taux effectif : <span class="${rateClass}">${s.effectiveHourlyRate.toFixed(2)} €/h</span></div>` : ''}
+            <div>${varLabel}</div>
+          </div>` : ''}
+          ${ch.notes ? `<div style="margin-top:6px; font-size:13px; color:#666; font-style:italic;">${escapeHtml(ch.notes)}</div>` : ''}
+          ${ch.prestations && ch.prestations.length > 0 ? `
+          <div style="margin-top:6px; font-size:12px; color:#888;">
+            ${ch.prestations.map(p => {
+              const it = findItemById(p.itemId);
+              return it ? `${escapeHtml(it.desc)} × ${p.qty}` : '';
+            }).filter(Boolean).join(' · ')}
+          </div>` : ''}
         </div>
-        ${isPatronMode ? `<div class="chantier-stats">
-          <div>CA : <strong>${s.revenue.toFixed(2)} €</strong></div>
-          <div>Marge : <strong>${s.grossProfit.toFixed(2)} €</strong></div>
-          ${!s.isBabad ? `<div>Taux effectif : <span class="${rateClass}">${s.effectiveHourlyRate.toFixed(2)} €/h</span></div>` : ''}
-          <div>${varLabel}</div>
-        </div>` : ''}
-        ${ch.notes ? `<div style="margin-top:6px; font-size:13px; color:#666; font-style:italic;">${escapeHtml(ch.notes)}</div>` : ''}
-        ${ch.prestations && ch.prestations.length > 0 ? `
-        <div style="margin-top:6px; font-size:12px; color:#888;">
-          ${ch.prestations.map(p => {
-            const it = findItemById(p.itemId);
-            return it ? `${escapeHtml(it.desc)} × ${p.qty}` : '';
-          }).filter(Boolean).join(' · ')}
-        </div>` : ''}
+      `;
+    }).join('');
+
+    return `
+      <div class="chantier-group" data-group-key="${escapeHtml(expandKey)}" style="border:1px solid #d4d4d4; border-radius:8px; padding:10px 12px; margin-bottom:10px; background:#fafbf8;">
+        <div style="display:flex; justify-content:space-between; align-items:center; cursor:pointer; gap:8px;" onclick="toggleChantierGroup('${safeKey}')">
+          <div style="flex:1; min-width:0;">
+            <div style="font-weight:700; font-size:15px; color:#3d6f28;">👤 ${nomClient} <span style="color:#888; font-weight:400; font-size:13px;">— ${nbCh} chantier${nbCh > 1 ? 's' : ''}</span></div>
+            ${totalsHtml}
+          </div>
+          <div style="font-size:18px; color:#3d6f28; user-select:none;" aria-label="${isExpanded ? 'Réduire' : 'Développer'}">${chevron}</div>
+        </div>
+        <div class="chantier-group-body" style="display:${isExpanded ? 'block' : 'none'}; margin-top:8px;">
+          ${chantiersHtml}
+        </div>
       </div>
     `;
   }).join('');
 
   // Lancer chargement météo pour chaque chantier planifié avec adresse + date future
+  // (on lance pour tous les chantiers filtrés ; les groupes fermés affecteront un slot inexistant — c'est ok)
   filtered.forEach(ch => {
     if ((ch.statut || 'en_cours') === 'planifie' && ch.adresse && ch.date && isFutureOrToday(ch.date)) {
-      loadWeatherIntoSlot(ch, 'weather-slot-' + ch.id);
+      // Slot rendu uniquement si groupe ouvert ; on tente quand même
+      const slot = document.getElementById('weather-slot-' + ch.id);
+      if (slot) loadWeatherIntoSlot(ch, 'weather-slot-' + ch.id);
     }
   });
 
   renderPrestaLines();
+}
+
+// Toggle d'un groupe de chantiers (par clientId ou par nom)
+function toggleChantierGroup(groupKey) {
+  if (!window._chantierGroupsExpand) window._chantierGroupsExpand = {};
+  window._chantierGroupsExpand[groupKey] = !window._chantierGroupsExpand[groupKey];
+  // Re-render léger : on retrouve la carte et on toggle uniquement son body + chevron
+  // pour éviter de tout reconstruire (et éviter les fetch météo répétés)
+  const groups = document.querySelectorAll('.chantier-group');
+  groups.forEach(g => {
+    if (g.getAttribute('data-group-key') === groupKey) {
+      const body = g.querySelector('.chantier-group-body');
+      const chev = g.querySelector('[aria-label]');
+      const expanded = window._chantierGroupsExpand[groupKey];
+      if (body) body.style.display = expanded ? 'block' : 'none';
+      if (chev) {
+        chev.textContent = expanded ? '▼' : '▶';
+        chev.setAttribute('aria-label', expanded ? 'Réduire' : 'Développer');
+      }
+      // Charger météo des chantiers maintenant visibles
+      if (expanded) {
+        body.querySelectorAll('.weather-slot').forEach(slot => {
+          const id = slot.id.replace('weather-slot-', '');
+          const ch = data.chantiers.find(c => c.id === id);
+          if (ch && ch.adresse && ch.date && (typeof isFutureOrToday !== 'function' || isFutureOrToday(ch.date))) {
+            try { loadWeatherIntoSlot(ch, slot.id); } catch(e) {}
+          }
+        });
+      }
+    }
+  });
 }
 
 function removeChantier(id) {
@@ -8725,42 +8847,58 @@ async function renderPlanningHebdo(forceRefresh) {
     if (c.googleEventId) linkedByEventId.set(c.googleEventId, c.id);
   });
 
-  const daysHtml = days.map((d, i) => {
+  // Construit une cellule (jour) en grille
+  const buildDayCell = (d, i) => {
     const dStr = d.toISOString().slice(0,10);
     const isToday = (dStr === todayStr);
     const dayNum = String(d.getDate()).padStart(2, '0');
     const monthNum = String(d.getMonth() + 1).padStart(2, '0');
     const evs = eventsForDay(d);
-    const headerStyle = isToday
-      ? 'background:#fff8e1; padding:6px 10px; border-radius:6px; font-weight:700; color:#3d6f28;'
-      : 'padding:6px 10px; font-weight:600; color:#444;';
+
+    const headerBg = isToday ? '#fff8e1' : '#f7f9f5';
+    const headerColor = isToday ? '#3d6f28' : '#444';
+    const headerWeight = isToday ? '700' : '600';
+
     const eventsHtml = evs.length === 0
-      ? `<div style="font-size:12px; color:#bbb; font-style:italic; padding:2px 14px;">(rien)</div>`
+      ? `<div style="color:#ccc; font-size:18px; text-align:center; padding:6px 0;">─</div>`
       : evs.map(ev => {
           const safeId = String(ev.id).replace(/'/g, "\\'");
-          const title = escapeHtml(ev.summary || '(Sans titre)');
+          const fullTitle = (ev.summary || '(Sans titre)').trim();
+          // Titre court (max 14 chars) pour cellule
+          const shortTitle = fullTitle.length > 14 ? fullTitle.slice(0, 13) + '…' : fullTitle;
+          const titleEsc = escapeHtml(shortTitle);
+          const titleAttr = escapeHtml(fullTitle + (ev.location ? ' · 📍 ' + ev.location : ''));
           const time = formatEventTime(ev);
-          const loc = ev.location ? ' <span style="color:#888;">· 📍 ' + escapeHtml(ev.location) + '</span>' : '';
-          // Si déjà lié à un chantier → clic ouvre le chantier ; sinon → propose conversion
+          // Heure compacte : "08h-17h" → "08h-17", on garde tel quel sinon
           const linkedChId = linkedByEventId.get(ev.id);
-          if (linkedChId) {
-            return `<div onclick="dashboardOpenChantier('${linkedChId}')" style="cursor:pointer; padding:4px 14px; font-size:13px; border-left:3px solid #5ba241; margin:2px 0; background:#f7faf3;">
-              <strong>${time ? '📅 ' + time : '📅'}</strong> ${title}${loc} <span style="color:#5ba241; font-size:11px;">⚒ chantier</span>
-            </div>`;
-          }
-          return `<div onclick="convertGoogleEventToChantier('${safeId}')" title="Clique pour convertir en chantier" style="cursor:pointer; padding:4px 14px; font-size:13px; border-left:3px solid #aaa; margin:2px 0;">
-            <strong>${time ? '📅 ' + time : '📅'}</strong> ${title}${loc}
+          const isAllDay = (ev.start && ev.start.date && !ev.start.dateTime);
+          const timeShort = isAllDay ? 'toute la jrn' : time;
+          const bgColor = linkedChId ? '#f7faf3' : '#fff';
+          const borderColor = linkedChId ? '#5ba241' : '#bbb';
+          const textColor = linkedChId ? '#3d6f28' : '#444';
+          const onClick = linkedChId
+            ? `dashboardOpenChantier('${linkedChId}')`
+            : `convertGoogleEventToChantier('${safeId}')`;
+          const tooltip = linkedChId
+            ? 'Ouvrir le chantier'
+            : 'Convertir en chantier';
+          return `<div onclick="${onClick}" title="${titleAttr} · ${tooltip}" style="cursor:pointer; padding:4px 5px; margin:2px 0; background:${bgColor}; border-left:3px solid ${borderColor}; border-radius:3px; font-size:11px; line-height:1.25;">
+            <div style="font-weight:600; color:${textColor}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${titleEsc}</div>
+            <div style="color:#888; font-size:10px;">${escapeHtml(timeShort)}</div>
           </div>`;
         }).join('');
+
     return `
-      <div style="margin-bottom:8px;">
-        <div style="${headerStyle} border-bottom:1px solid #eee;">
-          ${dayLabels[i]} ${dayNum}/${monthNum}${isToday ? " · aujourd'hui" : ''}
+      <div style="border:1px solid #e5e5e5; border-radius:6px; min-width:115px; min-height:120px; display:flex; flex-direction:column; background:#fff;">
+        <div style="background:${headerBg}; color:${headerColor}; font-weight:${headerWeight}; padding:5px 6px; border-radius:5px 5px 0 0; border-bottom:1px solid #e5e5e5; font-size:12px; text-align:center;">
+          ${dayLabels[i]} ${dayNum}/${monthNum}${isToday ? ' ★' : ''}
         </div>
-        ${eventsHtml}
+        <div style="padding:4px; flex:1;">${eventsHtml}</div>
       </div>
     `;
-  }).join('');
+  };
+
+  const cellsHtml = days.map((d, i) => buildDayCell(d, i)).join('');
 
   el.innerHTML = `
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:6px;">
@@ -8770,9 +8908,13 @@ async function renderPlanningHebdo(forceRefresh) {
     <div style="font-size:12px; color:#888; margin-bottom:10px;">
       ${mondayStr} → ${sundayStr}${isCurrentWeek ? ' · cette semaine' : ''}
     </div>
-    <div>${daysHtml}</div>
+    <div style="overflow-x:auto; -webkit-overflow-scrolling:touch;">
+      <div style="display:grid; grid-template-columns:repeat(7, minmax(115px, 1fr)); gap:6px; min-width:820px;">
+        ${cellsHtml}
+      </div>
+    </div>
     <div style="font-size:11px; color:#888; margin-top:10px; padding-top:8px; border-top:1px dashed #eee;">
-      Clique sur un event pour ouvrir le chantier lié ou le convertir en chantier.
+      Clique sur un event pour ouvrir le chantier lié ou le convertir en chantier. ★ = aujourd'hui.
     </div>
   `;
 }
