@@ -205,6 +205,27 @@
   .btn-add { background: var(--green); color: white; }
   .btn-secondary { background: #e8e8e8; color: #333; }
   .btn-small { padding: 6px 12px; font-size: 12px; min-height: 32px; }
+  .btn-voice {
+    background: #f3f3f3; color: #555; border: 1px solid #d4d4d4;
+    border-radius: 50%; width: 28px; height: 28px; min-height: 28px;
+    padding: 0; font-size: 14px; cursor: pointer; margin-left: 6px;
+    line-height: 1; display: inline-flex; align-items: center; justify-content: center;
+    vertical-align: middle;
+  }
+  .btn-voice:hover { background: #e0e0e0; }
+  .btn-voice.recording {
+    background: #e74c3c; color: #fff; border-color: #c0392b;
+    animation: voicePulse 1s ease-in-out infinite;
+  }
+  @keyframes voicePulse {
+    0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(231,76,60,0.6); }
+    50% { transform: scale(1.1); box-shadow: 0 0 0 6px rgba(231,76,60,0); }
+  }
+  .weather-pluie-alerte {
+    display: inline-block; background: #fff3e0; color: #e67e22;
+    border: 1px solid #f39c12; border-radius: 4px; padding: 1px 6px;
+    font-size: 11px; font-weight: 600; margin-left: 4px;
+  }
 
   .toggle-group {
     display: inline-flex;
@@ -1229,11 +1250,11 @@
         <button class="btn-secondary btn-small" style="margin-top:6px;" onclick="addPrestaLine()">+ Prestation</button>
       </div>
       <div class="field" style="margin-top:12px;">
-        <label>Matériel prévu (optionnel)</label>
+        <label>Matériel prévu (optionnel) <button type="button" class="btn-voice" onclick="startVoiceInput('new-materiel-prevu')" title="Dicter">🎤</button></label>
         <textarea id="new-materiel-prevu" rows="2" placeholder="ex: 2T gravier 6/10, 20m2 bidim, 5m3 sable" style="width:100%; padding:8px; border:1px solid #d4d4d4; border-radius:6px; font-family:inherit;"></textarea>
       </div>
       <div class="field" style="margin-top:8px;">
-        <label>Notes (optionnel)</label>
+        <label>Notes (optionnel) <button type="button" class="btn-voice" onclick="startVoiceInput('new-notes')" title="Dicter">🎤</button></label>
         <textarea id="new-notes" rows="2" style="width:100%; padding:8px; border:1px solid #d4d4d4; border-radius:6px; font-family:inherit;"></textarea>
       </div>
       <div style="margin-top:14px; padding:10px 12px; background:#f0f7eb; border:1px dashed #5ba241; border-radius:8px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
@@ -1741,7 +1762,9 @@ const DEFAULT_DATA = {
     gbpReviewUrl: '',
     gbpReviewCount: 0,
     gbpRating: 0,
-    weeklyTasksDone: {}
+    weeklyTasksDone: {},
+    reviews: [],
+    portfolioUrl: ''
   },
   comptabilite: {
     joursMois: 20,
@@ -1859,7 +1882,9 @@ function loadData() {
           gbpReviewUrl: '',
           gbpReviewCount: 0,
           gbpRating: 0,
-          weeklyTasksDone: {}
+          weeklyTasksDone: {},
+          reviews: [],
+          portfolioUrl: ''
         };
       } else {
         if (parsed.marketing.gbpUrl === undefined) parsed.marketing.gbpUrl = '';
@@ -1867,7 +1892,14 @@ function loadData() {
         if (parsed.marketing.gbpReviewCount === undefined) parsed.marketing.gbpReviewCount = 0;
         if (parsed.marketing.gbpRating === undefined) parsed.marketing.gbpRating = 0;
         if (!parsed.marketing.weeklyTasksDone) parsed.marketing.weeklyTasksDone = {};
+        // Migration v29 : avis Google + portfolio
+        if (!Array.isArray(parsed.marketing.reviews)) parsed.marketing.reviews = [];
+        if (parsed.marketing.portfolioUrl === undefined) parsed.marketing.portfolioUrl = '';
       }
+      // Migration v29 : publicSlug par chantier (pour QR code album)
+      parsed.chantiers.forEach(ch => {
+        if (ch.publicSlug === undefined) ch.publicSlug = null;
+      });
       // Migration silencieuse v20 : timestamp pour sync Drive
       if (!parsed._lastModified) parsed._lastModified = Date.now();
       // Migration silencieuse v28 : multi-utilisateurs
@@ -2530,6 +2562,7 @@ function renderChantiers() {
     const typeBadge = `<span class="badge-${ch.type || 'perso'}">${(ch.type || 'perso') === 'babad' ? 'BABAD' : 'Perso'}</span>`;
     const statutBadge = `<span class="badge-${ch.statut || 'en_cours'}">${statutLabel[ch.statut || 'en_cours'] || ch.statut}</span>`;
     const isPatronMode = (typeof isPatron === 'function' && isPatron());
+    const showWeather = ((ch.statut || 'en_cours') === 'planifie') && ch.adresse && ch.date && isFutureOrToday(ch.date);
     return `
       <div class="chantier-item">
         <div class="chantier-head">
@@ -2537,6 +2570,7 @@ function renderChantiers() {
             <div class="chantier-title">${nomClient}${ch.devisId ? ' <span style="font-size:11px; color:#2ecc71;">depuis devis</span>' : ''}</div>
             <div class="chantier-badges">${typeBadge} ${statutBadge}</div>
             <div class="chantier-meta">${ch.date}${ch.adresse ? ' — ' + escapeHtml(ch.adresse) : ''} — ${ch.hours}h${(isPatronMode && ch.materialCost) ? ' — ' + ch.materialCost + '€ mat.' : ''}</div>
+            ${showWeather ? `<div class="weather-slot" id="weather-slot-${ch.id}" style="margin-top:5px; font-size:12px; color:#666;">🌦️ Chargement météo…</div>` : ''}
           </div>
           <div style="display:flex; gap:6px;">
             <button class="btn-secondary btn-small" onclick="viewChantier('${ch.id}')">Ouvrir</button>
@@ -2560,6 +2594,13 @@ function renderChantiers() {
       </div>
     `;
   }).join('');
+
+  // Lancer chargement météo pour chaque chantier planifié avec adresse + date future
+  filtered.forEach(ch => {
+    if ((ch.statut || 'en_cours') === 'planifie' && ch.adresse && ch.date && isFutureOrToday(ch.date)) {
+      loadWeatherIntoSlot(ch, 'weather-slot-' + ch.id);
+    }
+  });
 
   renderPrestaLines();
 }
@@ -3311,9 +3352,158 @@ function viewClient(id) {
         </div>
       `).join('')}
     ` : ''}
+    <div style="margin-top:14px; padding:12px; background:#f0f7eb; border-left:3px solid #5ba241; border-radius:0 6px 6px 0;">
+      <div style="font-weight:600; color:#3d6f28; margin-bottom:6px;">📊 Rapport annuel pour ce client</div>
+      <p style="font-size:12px; color:#666; margin:4px 0 8px;">
+        Genere un PDF "bilan de l'annee" avec les chantiers + photos. Idéal pour fideliser !
+      </p>
+      <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+        <select id="rapport-annuel-year-${id}" style="padding:5px 10px; border:1px solid #d4d4d4; border-radius:4px;">
+          ${(() => {
+            const cy = new Date().getFullYear();
+            const years = new Set([cy]);
+            chantiers.forEach(ch => { const y = (ch.date || '').slice(0,4); if (y) years.add(y); });
+            return Array.from(years).sort((a,b) => b - a).map(y => `<option value="${y}">${y}</option>`).join('');
+          })()}
+        </select>
+        <button class="btn-add btn-small" onclick="printRapportAnnuelClient('${id}', document.getElementById('rapport-annuel-year-${id}').value)">📄 Generer le rapport PDF</button>
+      </div>
+    </div>
+
     <button class="btn-danger btn-small" style="margin-top:12px;" onclick="deleteClient('${id}')">Supprimer le client</button>
   `;
   window.scrollTo({ top: detail.offsetTop - 20, behavior: 'smooth' });
+}
+
+function printRapportAnnuelClient(clientId, year) {
+  const cl = data.clients.find(c => c.id === clientId);
+  if (!cl) { toast('Client introuvable'); return; }
+  const yearStr = String(year || new Date().getFullYear());
+  const chantiers = (data.chantiers || []).filter(ch =>
+    ch.clientId === clientId && (ch.date || '').startsWith(yearStr)
+  );
+  if (chantiers.length === 0) {
+    if (!confirm(`Aucun chantier pour ${cl.name} en ${yearStr}. Generer quand meme le rapport ?`)) return;
+  }
+
+  // Photos : selection max 12
+  const allPhotos = [];
+  chantiers.forEach(ch => {
+    (ch.photos || []).forEach(ph => allPhotos.push({ ph, ch }));
+  });
+  const photos = allPhotos.slice(0, 12);
+
+  // Total heures
+  let totalHeures = 0;
+  chantiers.forEach(ch => { totalHeures += parseFloat(ch.hours || 0); });
+
+  const co = data.companyInfo || {};
+  const phone = co.phone || '';
+  const email = co.email || '';
+
+  const chantiersHtml = chantiers.map(ch => {
+    const date = ch.date || '?';
+    const desc = (ch.notes || ch.materielLibre || '').slice(0, 200);
+    return `<li style="margin-bottom:8px;">
+      <b>${escapeHtml(date)}</b>
+      ${ch.adresse ? ' &middot; ' + escapeHtml(ch.adresse) : ''}
+      ${desc ? `<div style="font-size:12px; color:#666; margin-top:2px;">${escapeHtml(desc)}</div>` : ''}
+    </li>`;
+  }).join('');
+
+  const photosHtml = photos.length > 0 ? `
+    <h3 style="color:#3d6f28; margin-top:24px;">📷 Quelques moments de l'annee</h3>
+    <div class="photos-grid">
+      ${photos.map(p => `<div class="photo-cell"><img src="${p.ph.dataUrl}" alt="Photo"></div>`).join('')}
+    </div>
+  ` : '';
+
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bilan ${yearStr} - ${escapeHtml(cl.name)}</title>
+    <base href="${window.location.href}">
+    <style>
+      @page { margin: 1.2cm; }
+      body { font-family: system-ui, -apple-system, sans-serif; padding: 0; color: #222; margin: 0; font-size: 13px; line-height: 1.5; }
+      .cover { padding: 30px 20px; text-align: center; border-bottom: 3px solid #5ba241; margin-bottom: 24px; }
+      .cover img.logo { max-width: 200px; height: auto; margin-bottom: 14px; }
+      .cover h1 { color: #3d6f28; font-size: 28px; margin: 6px 0; }
+      .cover h2 { color: #555; font-size: 18px; font-weight: 400; margin: 4px 0; }
+      .content { padding: 0 22px; }
+      .intro { background: #f0f7eb; border-left: 3px solid #5ba241; padding: 14px 18px; margin-bottom: 22px; font-size: 13px; }
+      h3 { color: #3d6f28; font-size: 16px; border-bottom: 1px solid #ddd; padding-bottom: 6px; margin-top: 22px; }
+      ul { padding-left: 20px; }
+      .stats { display: flex; gap: 16px; flex-wrap: wrap; margin: 16px 0; }
+      .stat-box { flex: 1; min-width: 140px; background: #fafcf7; border-left: 3px solid #5ba241; padding: 10px 14px; border-radius: 0 6px 6px 0; }
+      .stat-box .label { font-size: 11px; color: #666; text-transform: uppercase; }
+      .stat-box .value { font-size: 22px; font-weight: 700; color: #3d6f28; }
+      .photos-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+      .photo-cell { page-break-inside: avoid; }
+      .photo-cell img { width: 100%; height: 180px; object-fit: cover; border: 1px solid #ddd; border-radius: 4px; }
+      .conclusion { margin-top: 28px; padding: 16px 20px; background: #fff8e6; border-left: 3px solid #e67e22; border-radius: 0 6px 6px 0; font-size: 13px; line-height: 1.6; }
+      .signature { margin-top: 18px; font-style: italic; color: #3d6f28; font-weight: 600; }
+      .footer { margin-top: 28px; padding: 14px 22px; border-top: 1px solid #ddd; text-align: center; font-size: 11px; color: #888; }
+    </style></head><body>
+    <div class="cover">
+      <img src="logo.png" alt="Alex'terieur" class="logo" onerror="this.style.display='none'">
+      <h1>Bilan ${escapeHtml(yearStr)}</h1>
+      <h2>${escapeHtml(cl.name)}</h2>
+    </div>
+
+    <div class="content">
+      <div class="intro">
+        Cher${cl.name && /\s/.test(cl.name) ? '' : ''} ${escapeHtml(cl.name)},<br><br>
+        Voici le recapitulatif de notre collaboration cette annee ${escapeHtml(yearStr)}.
+        Un grand merci pour votre confiance renouvelee !
+      </div>
+
+      <div class="stats">
+        <div class="stat-box">
+          <div class="label">Chantiers realises</div>
+          <div class="value">${chantiers.length}</div>
+        </div>
+        <div class="stat-box">
+          <div class="label">Heures travaillees</div>
+          <div class="value">${totalHeures.toFixed(1)} h</div>
+        </div>
+      </div>
+
+      ${chantiers.length > 0 ? `
+        <h3>📋 Chantiers de l'annee</h3>
+        <ul>${chantiersHtml}</ul>
+      ` : `
+        <div style="padding:14px; background:#fafafa; border-radius:6px; color:#888;">Aucun chantier enregistre pour cette annee.</div>
+      `}
+
+      ${photosHtml}
+
+      <div class="conclusion">
+        Encore un grand merci pour votre fidelite. Si vous avez de nouveaux projets pour l'annee a venir,
+        je serai ravi de pouvoir y contribuer. N'hesitez pas a me contacter !
+        <div class="signature">Alex - E.I Alex'terieur Jardin &amp; Creation</div>
+      </div>
+    </div>
+
+    <div class="footer">
+      E.I Alex'terieur Jardin &amp; Creation
+      ${phone ? ' &middot; ' + escapeHtml(phone) : ''}
+      ${email ? ' &middot; ' + escapeHtml(email) : ''}
+    </div>
+    </body></html>`;
+
+  const iframe = document.createElement('iframe');
+  iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
+  document.body.appendChild(iframe);
+  const doc = iframe.contentDocument || iframe.contentWindow.document;
+  doc.open(); doc.write(html); doc.close();
+  const lp = () => {
+    try { iframe.contentWindow.focus(); iframe.contentWindow.print(); } catch(e) { console.error(e); }
+    setTimeout(() => { if (iframe.parentNode) iframe.parentNode.removeChild(iframe); }, 1500);
+  };
+  if (iframe.contentDocument && iframe.contentDocument.readyState === 'complete') {
+    setTimeout(lp, 300);
+  } else {
+    iframe.onload = () => setTimeout(lp, 300);
+    setTimeout(lp, 1200);
+  }
 }
 
 function deleteClient(id) {
@@ -6235,11 +6425,21 @@ function renderChantierDetail(ch) {
         <div style="font-size:13px; color:#666; margin-top:4px;">
           ${caSource} · Date : ${ch.date || '-'}${ch.adresse ? ' · ' + escapeHtml(ch.adresse) : ''}
         </div>
+        ${(ch.adresse || (client && client.address)) && ch.date && isFutureOrToday(ch.date) ? `<div class="weather-slot" id="weather-slot-detail-${ch.id}" style="margin-top:6px; font-size:13px; color:#666;">🌦️ Chargement météo…</div>` : ''}
       </div>
       <div style="display:flex; gap:6px; flex-wrap:wrap;">
+        ${(() => {
+          const adr = (client && client.address) ? client.address : (ch.adresse || '');
+          if (adr && adr.trim()) {
+            return `<button style="background:#1a73e8; color:#fff; border:none; border-radius:4px; padding:4px 10px; font-size:12px; cursor:pointer;" onclick="openGPSItineraire('${ch.id}')" title="Ouvrir l'itinéraire dans Google Maps">🗺️ Itinéraire GPS</button>`;
+          }
+          return `<button class="btn-secondary btn-small" disabled style="opacity:0.5; cursor:not-allowed;" title="Renseigne d'abord l'adresse">🗺️ Itinéraire GPS</button>`;
+        })()}
         <button class="btn-secondary btn-small" onclick="printFicheChantier('${ch.id}')">Imprimer fiche</button>
         <button class="btn-secondary btn-small" onclick="sendSMSChantier('${ch.id}')">Envoyer SMS</button>
         <button style="background:#4285f4; color:#fff; border:none; border-radius:4px; padding:4px 10px; font-size:12px; cursor:pointer;" onclick="openGoogleAgenda('${ch.id}')">📅 Google Agenda</button>
+        ${(ch.photos || []).length > 0 ? `<button class="btn-add btn-small" onclick="printAlbumChantier('${ch.id}')" title="Album PDF avec photos pour le client">📄 Album PDF</button>
+        <button class="btn-secondary btn-small" onclick="openChantierQRModal('${ch.id}')" title="QR code à donner au client">📱 QR client</button>` : ''}
         <button class="btn-secondary btn-small" onclick="closeChantierDetail()">Fermer</button>
       </div>
     </div>
@@ -6391,7 +6591,10 @@ function renderChantierDetail(ch) {
 
     <h4 style="margin-top:18px;">Achats effectues (saisie manuelle)</h4>
     <div id="achats-list-${ch.id}">${renderAchatsTable(ch)}</div>
-    <button class="btn-add btn-small" style="margin-top:8px;" onclick="addAchat('${ch.id}')">+ Saisir un achat</button>
+    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
+      <button class="btn-add btn-small" onclick="addAchat('${ch.id}')">+ Saisir un achat</button>
+      <button class="btn-secondary btn-small" onclick="addAchatVocal('${ch.id}')" title="Dicter (ex: '3 sacs ciment 45 euros')">🎤 Saisie vocale</button>
+    </div>
 
     <!-- Section Photos -->
     <h4 style="margin-top:20px; margin-bottom:8px;">Photos du chantier</h4>
@@ -6420,6 +6623,12 @@ function renderChantierDetail(ch) {
     </div>
     </div>
   `;
+
+  // Déclencher chargement météo si applicable
+  const adrPourMeteo = (client && client.address) ? client.address : (ch.adresse || '');
+  if (adrPourMeteo && ch.date && isFutureOrToday(ch.date)) {
+    loadWeatherIntoSlot({ adresse: adrPourMeteo, date: ch.date }, 'weather-slot-detail-' + ch.id);
+  }
 }
 
 function printFicheChantier(chId) {
@@ -7446,6 +7655,8 @@ function renderTodayAgendaEventCard(ev) {
   const highlight = isActive ? 'border:2px solid #2ecc71; background:#f4faf0;' : 'border:1px solid #e0e0e0; background:#fff;';
   const location = ev.location ? `<div style="font-size:11px; color:#888; margin-top:2px;">📍 ${escapeHtml(ev.location)}</div>` : '';
 
+  const evWeatherSlot = ev.location ? `<div class="weather-slot" id="weather-slot-ev-${safeId}" style="margin-top:4px; font-size:12px; color:#666;">🌦️ Chargement météo…</div>` : '';
+
   return `
     <div style="${highlight} border-radius:8px; padding:10px 12px; margin-bottom:8px;">
       <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; flex-wrap:wrap;">
@@ -7456,6 +7667,7 @@ function renderTodayAgendaEventCard(ev) {
           </div>
           <div style="font-size:12px; color:#666;">⏰ ${timeRange}</div>
           ${location}
+          ${evWeatherSlot}
         </div>
         <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
           ${actionBtn}
@@ -7483,6 +7695,14 @@ async function renderTodayAgenda(force) {
     return;
   }
   el.innerHTML = events.map(renderTodayAgendaEventCard).join('');
+  // Charger météo du jour pour chaque event avec localisation
+  const today = new Date().toISOString().slice(0, 10);
+  events.forEach(ev => {
+    if (ev.location) {
+      const safeId = String(ev.id).replace(/'/g, "\\'");
+      loadWeatherIntoSlot({ adresse: ev.location, date: today }, 'weather-slot-ev-' + safeId);
+    }
+  });
   // Tick live pour les events avec timer actif (1s)
   startTodayAgendaTick();
 }
@@ -8979,10 +9199,14 @@ function getCurrentISOWeek() {
 function ensureMarketingData() {
   if (!data.marketing) {
     data.marketing = {
+      reviews: [],
+      portfolioUrl: '',
       gbpUrl: '', gbpReviewUrl: '', gbpReviewCount: 0, gbpRating: 0, weeklyTasksDone: {}
     };
   }
   if (!data.marketing.weeklyTasksDone) data.marketing.weeklyTasksDone = {};
+  if (!Array.isArray(data.marketing.reviews)) data.marketing.reviews = [];
+  if (data.marketing.portfolioUrl === undefined) data.marketing.portfolioUrl = '';
 }
 
 function updateMarketingField(field, val) {
@@ -9335,7 +9559,25 @@ function renderMarketingPage() {
       `}
     </div>
 
-    <!-- Section 5 : Suggestions -->
+    <!-- Section 4 : Avis recus (suivi manuel) -->
+    ${renderReceivedReviewsSection()}
+
+    <!-- Section 5 : Portfolio public (URL de base pour QR codes) -->
+    <div class="card">
+      <h3>🌐 Portfolio public (pour QR codes chantier)</h3>
+      <p style="color:#666; font-size:13px; margin-top:0;">
+        URL utilisee pour generer les QR codes a donner aux clients (depuis chaque fiche chantier).
+        Par defaut : ton site officiel.
+      </p>
+      <div class="field">
+        <label>URL de mon site / portfolio</label>
+        <input type="url" placeholder="https://alexterieurjardinetcreation-beep.github.io/alexterieur-app/"
+               value="${escapeAttr(m.portfolioUrl || '')}"
+               onchange="updateMarketingField('portfolioUrl', this.value)">
+      </div>
+    </div>
+
+    <!-- Section 6 : Suggestions -->
     <div class="card" style="background:#fdf6ec; border-left:4px solid #e67e22;">
       <h3>💡 Conseils du moment</h3>
       <div style="display:flex; flex-direction:column; gap:10px;">
@@ -9558,6 +9800,406 @@ function resetReviewRequest(chId) {
   ch.reviewRequest = null;
   saveData();
   renderMarketingPage();
+}
+
+// ============================================================
+// ALBUM PDF + QR CODE PUBLIC PAR CHANTIER (v29)
+// ============================================================
+
+function ensureChantierPublicSlug(ch) {
+  if (!ch.publicSlug) {
+    ch.publicSlug = 'ch-' + Math.random().toString(36).slice(2, 8);
+    saveData();
+  }
+  return ch.publicSlug;
+}
+
+function printAlbumChantier(chId) {
+  const ch = data.chantiers.find(c => c.id === chId);
+  if (!ch) { toast('Chantier introuvable'); return; }
+  const photos = (ch.photos || []);
+  if (photos.length === 0) { toast('Aucune photo a inclure'); return; }
+  const cl = data.clients.find(c => c.id === ch.clientId);
+  const nomClient = cl ? cl.name : (ch.client || 'Client');
+  const adresse = (cl && cl.address) ? cl.address : (ch.adresse || '');
+  const co = data.companyInfo || {};
+  const phone = co.phone || '';
+  const email = co.email || '';
+  const annee = (ch.date || '').slice(0, 4) || new Date().getFullYear();
+
+  const photosHtml = photos.map((p, i) => {
+    const lbl = p.label ? escapeHtml(p.label) : `Photo ${i + 1}`;
+    return `<div class="photo-block">
+      <img src="${p.dataUrl}" alt="${lbl}">
+      <div class="photo-caption">${lbl}</div>
+    </div>`;
+  }).join('');
+
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Album chantier ${escapeHtml(nomClient)}</title>
+    <base href="${window.location.href}">
+    <style>
+      @page { margin: 1cm; }
+      body { font-family: system-ui, -apple-system, sans-serif; padding: 0; color: #222; margin: 0; font-size: 13px; }
+      .cover { padding: 30px 20px; text-align: center; border-bottom: 3px solid #5ba241; page-break-after: always; }
+      .cover .logo { max-width: 220px; height: auto; margin-bottom: 16px; }
+      .cover h1 { color: #3d6f28; font-size: 28px; margin: 6px 0; }
+      .cover h2 { color: #555; font-size: 18px; font-weight: 400; margin: 4px 0; }
+      .cover .info { color: #666; font-size: 14px; margin: 18px auto; max-width: 460px; }
+      .cover .merci { font-size: 14px; color: #444; line-height: 1.6; margin: 22px auto; max-width: 480px; padding: 14px 18px; background: #f0f7eb; border-left: 3px solid #5ba241; text-align: left; }
+      .gallery { padding: 14px 18px; }
+      .gallery h3 { color: #3d6f28; font-size: 16px; border-bottom: 1px solid #ddd; padding-bottom: 6px; margin-bottom: 14px; }
+      .photo-block { margin-bottom: 18px; page-break-inside: avoid; text-align: center; }
+      .photo-block img { max-width: 100%; max-height: 380px; height: auto; border: 1px solid #ddd; border-radius: 4px; object-fit: contain; }
+      .photo-caption { font-size: 12px; color: #666; margin-top: 4px; font-style: italic; }
+      .footer { margin-top: 24px; padding: 14px; border-top: 2px solid #5ba241; text-align: center; font-size: 12px; color: #555; }
+      .footer .signature { color: #3d6f28; font-weight: 600; font-size: 14px; margin-top: 6px; }
+    </style></head><body>
+    <div class="cover">
+      <img src="logo.png" alt="Alex'terieur" class="logo" onerror="this.style.display='none'">
+      <h1>Album photo ${escapeHtml(annee + '')}</h1>
+      <h2>Chantier realise pour ${escapeHtml(nomClient)}</h2>
+      ${adresse ? `<div class="info">${escapeHtml(adresse)}</div>` : ''}
+      ${ch.date ? `<div class="info">Date du chantier : ${escapeHtml(ch.date)}</div>` : ''}
+      <div class="merci">
+        Bonjour ${escapeHtml(nomClient)},<br><br>
+        Voici quelques photos du chantier realise chez vous.
+        Un grand merci pour votre confiance ! Si vous etes satisfait du resultat,
+        n'hesitez pas a en parler autour de vous, ou a nous laisser un avis Google :
+        ca nous aide enormement.<br><br>
+        Au plaisir de vous revoir,<br>
+        <b>Alex - E.I Alex'terieur Jardin &amp; Creation</b>
+      </div>
+    </div>
+    <div class="gallery">
+      <h3>${photos.length} photo${photos.length > 1 ? 's' : ''} du chantier</h3>
+      ${photosHtml}
+      <div class="footer">
+        E.I Alex'terieur Jardin &amp; Creation
+        ${phone ? ' &middot; ' + escapeHtml(phone) : ''}
+        ${email ? ' &middot; ' + escapeHtml(email) : ''}
+        <div class="signature">Merci pour votre confiance !</div>
+      </div>
+    </div>
+    </body></html>`;
+
+  const iframe = document.createElement('iframe');
+  iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
+  document.body.appendChild(iframe);
+  const doc = iframe.contentDocument || iframe.contentWindow.document;
+  doc.open(); doc.write(html); doc.close();
+  const lp = () => {
+    try { iframe.contentWindow.focus(); iframe.contentWindow.print(); } catch(e) { console.error(e); }
+    setTimeout(() => { if (iframe.parentNode) iframe.parentNode.removeChild(iframe); }, 1500);
+  };
+  if (iframe.contentDocument && iframe.contentDocument.readyState === 'complete') {
+    setTimeout(lp, 300);
+  } else {
+    iframe.onload = () => setTimeout(lp, 300);
+    setTimeout(lp, 1200);
+  }
+}
+
+function openChantierQRModal(chId) {
+  const ch = data.chantiers.find(c => c.id === chId);
+  if (!ch) { toast('Chantier introuvable'); return; }
+  ensureChantierPublicSlug(ch);
+  const cl = data.clients.find(c => c.id === ch.clientId);
+  const nomClient = cl ? cl.name : (ch.client || 'Client');
+  ensureMarketingData();
+  const portfolioBase = (data.marketing && data.marketing.portfolioUrl) ? data.marketing.portfolioUrl.trim()
+    : 'https://alexterieurjardinetcreation-beep.github.io/alexterieur-app/';
+  const publicUrl = portfolioBase.replace(/\/+$/, '') + '/?ref=' + encodeURIComponent(ch.publicSlug);
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&margin=10&data=${encodeURIComponent(publicUrl)}`;
+  const fileName = 'qr-chantier-' + nomClient.replace(/[^a-zA-Z0-9]/g, '_') + '.png';
+
+  let overlay = document.getElementById('chantier-qr-modal');
+  if (overlay) overlay.remove();
+  overlay = document.createElement('div');
+  overlay.id = 'chantier-qr-modal';
+  overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:10000; display:flex; justify-content:center; align-items:center; padding:14px; overflow:auto;';
+  overlay.innerHTML = `
+    <div style="background:#fff; border-radius:12px; padding:20px; max-width:480px; width:100%; max-height:95vh; overflow:auto; box-shadow:0 8px 32px rgba(0,0,0,0.3); position:relative;">
+      <button onclick="document.getElementById('chantier-qr-modal').remove()"
+              style="position:absolute; top:10px; right:10px; background:#eee; border:none; border-radius:50%; width:30px; height:30px; cursor:pointer; font-size:16px;">&times;</button>
+      <h3 style="margin:0 0 10px;">📱 QR code client - ${escapeHtml(nomClient)}</h3>
+      <p style="font-size:13px; color:#666; margin:6px 0 14px;">
+        A imprimer et donner au client a la fin du chantier.
+        Quand il scanne, il arrive sur ton site Alex'terieur.
+      </p>
+      <div style="text-align:center; padding:14px; background:#f7f9f5; border-radius:8px; margin-bottom:12px;">
+        <img src="${qrUrl}" alt="QR code chantier" style="border:1px solid #ddd; border-radius:8px; background:#fff;">
+        <div style="font-size:11px; color:#888; margin-top:8px; word-break:break-all;">${escapeHtml(publicUrl)}</div>
+      </div>
+      <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px;">
+        <button class="btn-add btn-small" onclick="downloadQRCode(&quot;${escapeAttr(publicUrl)}&quot;, &quot;${escapeAttr(fileName)}&quot;)">📥 Telecharger PNG</button>
+        <button class="btn-secondary btn-small" onclick="copyToClipboard(&quot;${escapeAttr(publicUrl)}&quot;, 'Lien copie')">📋 Copier le lien</button>
+        <button class="btn-secondary btn-small" onclick="printAlbumChantier('${chId}'); document.getElementById('chantier-qr-modal').remove();">📄 Album PDF</button>
+      </div>
+      <div style="padding:10px 12px; background:#fff8e6; border:1px dashed #e67e22; border-radius:6px; font-size:12px; color:#7a4f00;">
+        💡 <b>Astuce :</b> imprime ce QR et colle-le au dos de l'album PDF que tu donnes au client.
+        Configure l'URL de ton site dans <b>Marketing &rarr; Portfolio public</b> pour personnaliser le lien.
+      </div>
+    </div>
+  `;
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  document.body.appendChild(overlay);
+}
+
+// ============================================================
+// AVIS GOOGLE RECUS - SUIVI MANUEL (v29)
+// ============================================================
+
+const REVIEW_TEMPLATES = {
+  5: [
+    { label: '😊 Standard chaleureux',
+      text: "Merci infiniment {client} pour ce magnifique retour ! Ravi que vous soyez satisfait du chantier. Au plaisir de vous revoir pour de nouveaux projets ! Alex - E.I Alex'terieur" },
+    { label: '🌳 Touche paysagiste',
+      text: "Merci {client} pour votre confiance et votre avis ! C'etait un vrai plaisir de transformer votre exterieur. A tres bientot ! Alex - Alex'terieur Jardin & Creation" }
+  ],
+  4: [
+    { label: '🙂 Reconnaissant',
+      text: "Merci {client} pour votre retour ! Je suis content que le chantier vous plaise. N'hesitez pas a me dire ce qui aurait pu etre encore mieux, je suis toujours a l'ecoute. A bientot ! Alex" }
+  ],
+  3: [
+    { label: '💬 Ouverture dialogue',
+      text: "Merci {client} pour votre avis. J'aimerais bien comprendre ce qui pourrait etre ameliore : pourriez-vous m'appeler au {tel} ? Votre retour m'aide a progresser. Cordialement, Alex" }
+  ],
+  2: [
+    { label: '🙏 Excuses + appel',
+      text: "Bonjour {client}, je suis vraiment desole de cette experience. Pouvez-vous m'appeler au {tel} pour qu'on regarde ensemble ce qui ne va pas ? Je tiens a trouver une solution. Alex - Alex'terieur" }
+  ],
+  1: [
+    { label: '🙏 Excuses + appel',
+      text: "Bonjour {client}, je suis sincerement desole de cette experience. C'est important pour moi de comprendre. Pouvez-vous m'appeler au {tel} ? Je vous propose qu'on en discute. Alex" }
+  ]
+};
+
+function getReviewTemplates(rating) {
+  const r = parseInt(rating) || 5;
+  return REVIEW_TEMPLATES[r] || REVIEW_TEMPLATES[5];
+}
+
+function fillReviewTemplate(text, clientName) {
+  const tel = (data.companyInfo && data.companyInfo.phone) || 'mon numero';
+  return text.replace(/\{client\}/g, clientName || 'cher client')
+             .replace(/\{tel\}/g, tel);
+}
+
+function addReceivedReview() {
+  ensureMarketingData();
+  const review = {
+    id: 'rv_' + Date.now() + '_' + Math.random().toString(36).slice(2, 5),
+    date: new Date().toISOString().slice(0, 10),
+    clientName: '',
+    rating: 5,
+    text: '',
+    platform: 'Google',
+    responded: false,
+    response: ''
+  };
+  data.marketing.reviews.push(review);
+  saveData();
+  renderMarketingPage();
+  setTimeout(() => {
+    const el = document.getElementById('review-name-' + review.id);
+    if (el) el.focus();
+  }, 100);
+}
+
+function deleteReceivedReview(id) {
+  if (!confirm('Supprimer cet avis du suivi ?')) return;
+  ensureMarketingData();
+  data.marketing.reviews = data.marketing.reviews.filter(r => r.id !== id);
+  saveData();
+  renderMarketingPage();
+  toast('Avis supprime');
+}
+
+function updateReviewField(id, field, val) {
+  ensureMarketingData();
+  const r = data.marketing.reviews.find(x => x.id === id);
+  if (!r) return;
+  if (field === 'rating') r[field] = parseInt(val) || 5;
+  else r[field] = val;
+  saveData();
+  if (field === 'rating') renderMarketingPage();
+}
+
+function toggleReviewResponded(id) {
+  ensureMarketingData();
+  const r = data.marketing.reviews.find(x => x.id === id);
+  if (!r) return;
+  r.responded = !r.responded;
+  saveData();
+  renderMarketingPage();
+}
+
+function applyReviewTemplate(id, templateIdx) {
+  ensureMarketingData();
+  const r = data.marketing.reviews.find(x => x.id === id);
+  if (!r) return;
+  const tpls = getReviewTemplates(r.rating);
+  const tpl = tpls[templateIdx];
+  if (!tpl) return;
+  r.response = fillReviewTemplate(tpl.text, r.clientName);
+  saveData();
+  renderMarketingPage();
+}
+
+function copyReviewResponse(id) {
+  ensureMarketingData();
+  const r = data.marketing.reviews.find(x => x.id === id);
+  if (!r || !r.response) { toast('Pas de reponse a copier'); return; }
+  copyToClipboard(r.response, '📋 Reponse copiee ! Colle-la dans Google');
+}
+
+function computeReviewsStats() {
+  ensureMarketingData();
+  const list = data.marketing.reviews || [];
+  const total = list.length;
+  const avg = total > 0 ? (list.reduce((s, r) => s + (parseInt(r.rating) || 0), 0) / total) : 0;
+  const now = new Date();
+  const months = [];
+  for (let i = 2; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const start = d.getTime();
+    const end = new Date(now.getFullYear(), now.getMonth() - i + 1, 1).getTime();
+    const inMonth = list.filter(r => {
+      const t = new Date(r.date).getTime();
+      return t >= start && t < end;
+    });
+    months.push({
+      label: d.toLocaleDateString('fr-FR', { month: 'short' }),
+      count: inMonth.length,
+      avg: inMonth.length > 0 ? (inMonth.reduce((s, r) => s + (parseInt(r.rating) || 0), 0) / inMonth.length) : 0
+    });
+  }
+  return { total, avg, months };
+}
+
+function renderReceivedReviewsSection() {
+  ensureMarketingData();
+  const reviews = data.marketing.reviews || [];
+  const stats = computeReviewsStats();
+  const ratingColor = stats.avg >= 4.5 ? '#27ae60' : (stats.avg >= 4 ? '#f39c12' : (stats.avg >= 3 ? '#e67e22' : '#e74c3c'));
+  const sorted = reviews.slice().sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const clientsSuggest = data.clients.map(c => `<option value="${escapeAttr(c.name)}">`).join('');
+
+  return `
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+        <h3 style="margin:0;">⭐ Avis recus (suivi manuel)</h3>
+        <button class="btn-add btn-small" onclick="addReceivedReview()">+ Ajouter un avis recu</button>
+      </div>
+      <p style="color:#666; font-size:13px; margin-top:0;">
+        Saisis ici les avis recus (Google, Facebook...). Repondre a chaque avis booste ta visibilite.
+      </p>
+
+      ${reviews.length > 0 ? `
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:10px; margin-bottom:14px;">
+          <div style="background:#fff; padding:10px; border-radius:8px; border:1px solid #eee; text-align:center;">
+            <div style="font-size:11px; color:#888; text-transform:uppercase;">Total avis</div>
+            <div style="font-size:22px; font-weight:700; color:#3d6f28;">${stats.total}</div>
+          </div>
+          <div style="background:#fff; padding:10px; border-radius:8px; border:1px solid #eee; text-align:center;">
+            <div style="font-size:11px; color:#888; text-transform:uppercase;">Note moyenne</div>
+            <div style="font-size:22px; font-weight:700; color:${ratingColor};">${stats.avg ? stats.avg.toFixed(1) + ' ★' : '—'}</div>
+          </div>
+          <div style="background:#fff; padding:10px; border-radius:8px; border:1px solid #eee; text-align:center;">
+            <div style="font-size:11px; color:#888; text-transform:uppercase;">Repondus</div>
+            <div style="font-size:22px; font-weight:700; color:#2980b9;">${reviews.filter(r => r.responded).length}/${stats.total}</div>
+          </div>
+          <div style="background:#fff; padding:10px; border-radius:8px; border:1px solid #eee; text-align:center;">
+            <div style="font-size:11px; color:#888; text-transform:uppercase;">3 derniers mois</div>
+            <div style="font-size:13px; color:#333; line-height:1.5;">
+              ${stats.months.map(m => `${m.label} : <b>${m.count}</b>`).join(' &middot; ')}
+            </div>
+          </div>
+        </div>
+      ` : ''}
+
+      ${reviews.length === 0 ? `
+        <div class="empty-state">Aucun avis pour l'instant. Clique sur "+ Ajouter un avis recu" pour commencer le suivi.</div>
+      ` : `
+        <datalist id="dl-clients-reviews">${clientsSuggest}</datalist>
+        <div style="display:flex; flex-direction:column; gap:10px;">
+          ${sorted.map(r => renderReviewCard(r)).join('')}
+        </div>
+      `}
+    </div>
+  `;
+}
+
+function renderReviewCard(r) {
+  const tpls = getReviewTemplates(r.rating);
+  const stars = '★'.repeat(r.rating) + '<span style="color:#ddd;">' + '★'.repeat(5 - r.rating) + '</span>';
+  const ratingColor = r.rating >= 4 ? '#f39c12' : (r.rating >= 3 ? '#e67e22' : '#e74c3c');
+
+  return `
+    <div style="background:#fff; border:1px solid #eee; border-radius:8px; padding:12px;">
+      <div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:8px;">
+        <div style="font-size:18px; color:${ratingColor};" title="${r.rating}/5">${stars}</div>
+        <div style="display:flex; gap:6px; align-items:center;">
+          <span style="font-size:12px; color:${r.responded ? '#27ae60' : '#aaa'}; font-weight:600;">
+            ${r.responded ? '✓ Repondu' : '⏳ A repondre'}
+          </span>
+          <button class="btn-secondary btn-small" onclick="deleteReceivedReview('${r.id}')" title="Supprimer">🗑️</button>
+        </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 2fr 1fr 1fr; gap:8px; margin-bottom:8px;">
+        <div>
+          <label style="font-size:11px; color:#888;">Date</label>
+          <input type="date" value="${escapeAttr(r.date || '')}"
+                 onchange="updateReviewField('${r.id}', 'date', this.value)"
+                 style="width:100%; padding:5px 8px; border:1px solid #d4d4d4; border-radius:4px; font-size:12px;">
+        </div>
+        <div>
+          <label style="font-size:11px; color:#888;">Client</label>
+          <input type="text" id="review-name-${r.id}" list="dl-clients-reviews"
+                 value="${escapeAttr(r.clientName || '')}" placeholder="Nom du client"
+                 onchange="updateReviewField('${r.id}', 'clientName', this.value)"
+                 style="width:100%; padding:5px 8px; border:1px solid #d4d4d4; border-radius:4px; font-size:12px;">
+        </div>
+        <div>
+          <label style="font-size:11px; color:#888;">Note</label>
+          <select onchange="updateReviewField('${r.id}', 'rating', this.value)"
+                  style="width:100%; padding:5px 8px; border:1px solid #d4d4d4; border-radius:4px; font-size:12px;">
+            ${[5,4,3,2,1].map(n => `<option value="${n}" ${r.rating === n ? 'selected' : ''}>${n} ★</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label style="font-size:11px; color:#888;">Plateforme</label>
+          <select onchange="updateReviewField('${r.id}', 'platform', this.value)"
+                  style="width:100%; padding:5px 8px; border:1px solid #d4d4d4; border-radius:4px; font-size:12px;">
+            ${['Google','Facebook','Autre'].map(p => `<option value="${p}" ${r.platform === p ? 'selected' : ''}>${p}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+
+      <div style="margin-bottom:8px;">
+        <label style="font-size:11px; color:#888;">Texte de l'avis (recopie ici)</label>
+        <textarea rows="2" placeholder="Texte de l'avis..."
+                  onchange="updateReviewField('${r.id}', 'text', this.value)"
+                  style="width:100%; padding:5px 8px; border:1px solid #d4d4d4; border-radius:4px; font-size:12px; font-family:inherit; resize:vertical;">${escapeHtml(r.text || '')}</textarea>
+      </div>
+
+      <div style="margin-top:10px; padding:10px; background:#f7f9f5; border-radius:6px;">
+        <div style="font-size:12px; font-weight:600; color:#3d6f28; margin-bottom:6px;">📝 Reponse</div>
+        <div style="display:flex; gap:4px; flex-wrap:wrap; margin-bottom:6px;">
+          ${tpls.map((t, i) => `<button class="btn-secondary btn-small" onclick="applyReviewTemplate('${r.id}', ${i})" style="font-size:11px;">${escapeHtml(t.label)}</button>`).join('')}
+        </div>
+        <textarea rows="3" placeholder="Ta reponse a publier sur Google / Facebook..."
+                  onchange="updateReviewField('${r.id}', 'response', this.value)"
+                  style="width:100%; padding:6px 8px; border:1px solid #d4d4d4; border-radius:4px; font-size:12px; font-family:inherit; resize:vertical;">${escapeHtml(r.response || '')}</textarea>
+        <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
+          <button class="btn-add btn-small" onclick="copyReviewResponse('${r.id}')">📋 Copier la reponse</button>
+          <button class="btn-secondary btn-small" onclick="toggleReviewResponded('${r.id}')">${r.responded ? '↩️ Pas encore repondu' : '✓ Marquer comme repondu'}</button>
+          ${data.marketing && data.marketing.gbpUrl ? `<a href="${escapeHtml(data.marketing.gbpUrl)}" target="_blank" class="btn-secondary btn-small" style="text-decoration:none;">🔗 Ouvrir Google</a>` : ''}
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 // ============================================================
@@ -10134,6 +10776,250 @@ setTimeout(initMultiUser, 100);
 
 // ============================================================
 // FIN MODULE MULTI-USER
+// ============================================================
+
+// ============================================================
+// MODULE QUICK WINS TERRAIN — GPS / METEO / VOICE
+// ============================================================
+
+/* ---------- Helpers ---------- */
+function isFutureOrToday(dateStr) {
+  if (!dateStr) return false;
+  try {
+    const d = new Date(dateStr + 'T00:00:00');
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return d.getTime() >= today.getTime();
+  } catch(e) { return false; }
+}
+
+/* ---------- 1) GPS ITINERAIRE ---------- */
+function openGPSItineraire(chId) {
+  const ch = data.chantiers.find(c => c.id === chId);
+  if (!ch) return;
+  const client = data.clients.find(c => c.id === ch.clientId);
+  const adr = (client && client.address) ? client.address : (ch.adresse || '');
+  if (!adr || !adr.trim()) {
+    alert("Renseigne d'abord l'adresse du chantier.");
+    return;
+  }
+  const url = 'https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(adr.trim());
+  window.open(url, '_blank');
+}
+
+/* ---------- 2) METEO via Open-Meteo + Nominatim ---------- */
+const WEATHER_GEOCACHE_KEY = 'tarif_geo_cache_v1';
+const WEATHER_FORECAST_CACHE_KEY = 'tarif_weather_cache_v1';
+const WEATHER_CACHE_TTL_MS = 60 * 60 * 1000; // 1h
+
+function _loadWeatherJsonCache(key) {
+  try { return JSON.parse(localStorage.getItem(key) || '{}'); } catch(e) { return {}; }
+}
+function _saveWeatherJsonCache(key, obj) {
+  try { localStorage.setItem(key, JSON.stringify(obj)); } catch(e) {}
+}
+
+async function geocodeAddress(address) {
+  const cache = _loadWeatherJsonCache(WEATHER_GEOCACHE_KEY);
+  const norm = (address || '').trim().toLowerCase();
+  if (!norm) return null;
+  if (cache[norm] && cache[norm].lat && cache[norm].lon) return cache[norm];
+  try {
+    const url = 'https://nominatim.openstreetmap.org/search?q=' + encodeURIComponent(address) + '&format=json&limit=1';
+    const r = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    if (!r.ok) return null;
+    const arr = await r.json();
+    if (!arr || arr.length === 0) return null;
+    const result = { lat: parseFloat(arr[0].lat), lon: parseFloat(arr[0].lon) };
+    cache[norm] = result;
+    _saveWeatherJsonCache(WEATHER_GEOCACHE_KEY, cache);
+    return result;
+  } catch(e) {
+    console.warn('geocodeAddress error', e);
+    return null;
+  }
+}
+
+function weatherEmoji(code) {
+  if (code === 0) return '☀️';
+  if (code >= 1 && code <= 3) return '⛅';
+  if (code >= 45 && code <= 48) return '🌫️';
+  if (code >= 51 && code <= 67) return '🌦️';
+  if (code >= 71 && code <= 77) return '❄️';
+  if (code >= 80 && code <= 82) return '🌧️';
+  if (code >= 95 && code <= 99) return '⛈️';
+  return '🌤️';
+}
+
+async function fetchWeatherForChantier(ch) {
+  if (!ch || !ch.adresse || !ch.date) return null;
+  const cacheKey = (ch.adresse || '').trim().toLowerCase() + '|' + ch.date;
+  const cache = _loadWeatherJsonCache(WEATHER_FORECAST_CACHE_KEY);
+  const cached = cache[cacheKey];
+  if (cached && (Date.now() - cached.ts) < WEATHER_CACHE_TTL_MS) {
+    return cached.data;
+  }
+  const geo = await geocodeAddress(ch.adresse);
+  if (!geo) return null;
+  // Open-Meteo : limite 16 jours dans le futur
+  try {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${geo.lat}&longitude=${geo.lon}&daily=weathercode,temperature_2m_max,precipitation_sum&timezone=Europe%2FParis&start_date=${ch.date}&end_date=${ch.date}`;
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    const j = await r.json();
+    if (!j || !j.daily || !j.daily.time || j.daily.time.length === 0) return null;
+    const data = {
+      code: j.daily.weathercode[0],
+      tmax: j.daily.temperature_2m_max[0],
+      precip: j.daily.precipitation_sum[0]
+    };
+    cache[cacheKey] = { ts: Date.now(), data };
+    _saveWeatherJsonCache(WEATHER_FORECAST_CACHE_KEY, cache);
+    return data;
+  } catch(e) {
+    console.warn('fetchWeatherForChantier error', e);
+    return null;
+  }
+}
+
+async function loadWeatherIntoSlot(ch, slotId) {
+  const slot = document.getElementById(slotId);
+  if (!slot) return;
+  try {
+    const w = await fetchWeatherForChantier(ch);
+    const slotNow = document.getElementById(slotId);
+    if (!slotNow) return; // peut avoir été démonté
+    if (!w) {
+      slotNow.innerHTML = '<span style="color:#aaa;">🌥️ Météo indisponible</span>';
+      return;
+    }
+    const emoji = weatherEmoji(w.code);
+    const tmax = (w.tmax !== null && w.tmax !== undefined) ? Math.round(w.tmax) + '°C' : '';
+    const precip = (w.precip !== null && w.precip !== undefined) ? w.precip.toFixed(1) + 'mm' : '';
+    let html = `${emoji} ${tmax}${precip ? ' · 💧' + precip : ''}`;
+    if (w.precip !== null && w.precip !== undefined && w.precip > 5) {
+      html += ' <span class="weather-pluie-alerte">🟧 Risque pluie — reporter ?</span>';
+    }
+    slotNow.innerHTML = html;
+  } catch(e) {
+    const slotNow = document.getElementById(slotId);
+    if (slotNow) slotNow.innerHTML = '<span style="color:#aaa;">🌥️ Météo indisponible</span>';
+  }
+}
+
+/* ---------- 3) SAISIE VOCALE ---------- */
+let _activeVoiceBtn = null;
+function startVoiceInput(targetInputId) {
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRec) { alert('Saisie vocale non supportée par ton navigateur. Essaie Chrome.'); return; }
+  const rec = new SpeechRec();
+  rec.lang = 'fr-FR';
+  rec.continuous = false;
+  rec.interimResults = false;
+
+  // Identifier le bouton appelant (event.target n'est pas dispo ici, on cherche par onclick)
+  const allVoiceBtns = document.querySelectorAll('.btn-voice');
+  let btn = null;
+  allVoiceBtns.forEach(b => {
+    const oc = b.getAttribute('onclick') || '';
+    if (oc.includes("'" + targetInputId + "'") || oc.includes('"' + targetInputId + '"')) btn = b;
+  });
+  if (btn) {
+    btn.classList.add('recording');
+    _activeVoiceBtn = btn;
+  }
+
+  const cleanup = () => {
+    if (_activeVoiceBtn) { _activeVoiceBtn.classList.remove('recording'); _activeVoiceBtn = null; }
+  };
+
+  rec.onresult = (e) => {
+    const text = e.results[0][0].transcript;
+    const target = document.getElementById(targetInputId);
+    if (target) {
+      target.value = (target.value + ' ' + text).trim();
+      target.dispatchEvent(new Event('input', { bubbles: true }));
+      target.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    cleanup();
+  };
+  rec.onerror = (e) => { console.warn('Voice error', e); cleanup(); };
+  rec.onend = () => cleanup();
+  try { rec.start(); } catch(e) { console.warn('Voice start error', e); cleanup(); }
+}
+
+/* Saisie vocale d'achat avec parsing intelligent */
+function addAchatVocal(chId) {
+  const ch = data.chantiers.find(c => c.id === chId);
+  if (!ch) return;
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRec) { alert('Saisie vocale non supportée par ton navigateur. Essaie Chrome.'); return; }
+  if (!ch.achats) ch.achats = [];
+
+  const rec = new SpeechRec();
+  rec.lang = 'fr-FR';
+  rec.continuous = false;
+  rec.interimResults = false;
+
+  // Pulse sur le bouton
+  const btn = document.querySelector(`button[onclick="addAchatVocal('${chId}')"]`);
+  if (btn) btn.classList.add('recording');
+  const cleanup = () => { if (btn) btn.classList.remove('recording'); };
+
+  rec.onresult = (e) => {
+    const text = (e.results[0][0].transcript || '').trim();
+    cleanup();
+    if (!text) return;
+    // Parser : "(qty) (description) (prix) euros?"
+    // Regex tolérante : virgule ou point pour décimaux
+    const re = /(\d+(?:[,.]\d+)?)\s+(.+?)\s+(\d+(?:[,.]\d+)?)\s*(?:euros?|€)/i;
+    const m = text.match(re);
+    let achat = {
+      date: new Date().toISOString().slice(0,10),
+      desc: text,
+      supplier: '',
+      qty: 0,
+      unit: '€/unité',
+      unitPrice: 0,
+      stockQty: 0,
+      matKey: null
+    };
+    if (m) {
+      const qty = parseFloat(m[1].replace(',', '.'));
+      const desc = (m[2] || '').trim();
+      const prix = parseFloat(m[3].replace(',', '.'));
+      // Si prix > qty, on suppose que prix = total => unit price = prix / qty (sauf qty=0)
+      // Sinon on prend tel quel
+      achat.qty = qty || 0;
+      achat.desc = desc;
+      // Cas typique : "3 sacs ciment 45 euros" → 45€ = total OU 45€/unité ?
+      // On considère que c'est le prix unitaire pour rester proche de l'attente d'Alex,
+      // sauf si prix < qty (peu vraisemblable) → on l'inverse.
+      achat.unitPrice = prix || 0;
+      toast(`🎤 Achat ajouté : ${qty} × ${desc} à ${prix}€`);
+    } else {
+      toast(`🎤 Texte mis dans la désignation. Complète qty/prix.`);
+    }
+    ch.achats.push(achat);
+    saveData();
+    renderChantierDetail(ch);
+  };
+  rec.onerror = (e) => { console.warn('Voice error', e); cleanup(); };
+  rec.onend = () => cleanup();
+  try { rec.start(); } catch(e) { console.warn('Voice start error', e); cleanup(); }
+}
+
+// Expose globally
+window.openGPSItineraire = openGPSItineraire;
+window.loadWeatherIntoSlot = loadWeatherIntoSlot;
+window.fetchWeatherForChantier = fetchWeatherForChantier;
+window.geocodeAddress = geocodeAddress;
+window.isFutureOrToday = isFutureOrToday;
+window.startVoiceInput = startVoiceInput;
+window.addAchatVocal = addAchatVocal;
+
+// ============================================================
+// FIN MODULE QUICK WINS TERRAIN
 // ============================================================
 </script>
 </body>
