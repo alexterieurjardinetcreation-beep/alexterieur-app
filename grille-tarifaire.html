@@ -1498,18 +1498,93 @@
       </div>
     </div>
 
+    <!-- Profil utilisateur (multi-user v28) -->
+    <div class="card" style="margin-bottom:16px;">
+      <h3 style="margin-top:0; color:var(--green-dark);">👤 Profil utilisateur</h3>
+      <div id="profile-info" style="font-size:14px; color:#333; margin-bottom:10px;">—</div>
+      <button class="btn-secondary btn-small" onclick="openProfileWizard(true)">Changer de profil</button>
+    </div>
+
+    <!-- Ouvriers / Sous-traitants (Patron uniquement) -->
+    <div class="card" id="card-known-workers" style="margin-bottom:16px;">
+      <h3 style="margin-top:0; color:var(--green-dark);">👥 Ouvriers / Sous-traitants</h3>
+      <p style="color:#666; font-size:13px; margin-top:0;">Liste des personnes qui peuvent saisir leurs heures via leur propre compte Google. Renseigne leur email Gmail (celui qu'ils utilisent pour se connecter) et leur tarif jour.</p>
+      <div id="known-workers-list" style="margin-bottom:10px;"></div>
+      <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:flex-end;">
+        <div class="field" style="flex:1; min-width:120px;">
+          <label style="font-size:12px; color:#666;">Nom</label>
+          <input type="text" id="kw-name" placeholder="Thibault" style="padding:6px 10px; border:1px solid #d4d4d4; border-radius:4px; width:100%;">
+        </div>
+        <div class="field" style="flex:1; min-width:160px;">
+          <label style="font-size:12px; color:#666;">Email Gmail</label>
+          <input type="email" id="kw-email" placeholder="thibault@gmail.com" style="padding:6px 10px; border:1px solid #d4d4d4; border-radius:4px; width:100%;">
+        </div>
+        <div class="field" style="width:110px;">
+          <label style="font-size:12px; color:#666;">Tarif jour (€)</label>
+          <input type="number" id="kw-rate" placeholder="250" min="0" step="1" style="padding:6px 10px; border:1px solid #d4d4d4; border-radius:4px; width:100%;">
+        </div>
+        <button class="btn-add btn-small" onclick="addKnownWorker()">+ Ajouter</button>
+      </div>
+    </div>
+
     <div class="card">
       <h3 style="margin-top:0; color:var(--green-dark);">Informations</h3>
       <div style="font-size:13px; color:var(--text-muted); line-height:1.8;">
         <div>Application : <strong>Alex'terieur Grille Tarifaire</strong></div>
         <div>Année en cours : <span id="year-label-p">2025</span></div>
         <div>Données stockées localement (localStorage)</div>
-        <div style="margin-top:8px; font-size:12px; color:#aaa;">Version cache : tarifs-v27</div>
+        <div style="margin-top:8px; font-size:12px; color:#aaa;">Version cache : tarifs-v28</div>
       </div>
     </div>
   </div>
 
 </main>
+
+<!-- Modal wizard profil utilisateur (multi-user v28) -->
+<div id="profile-wizard-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:99000; align-items:center; justify-content:center; padding:18px;">
+  <div style="background:#fff; padding:26px 22px; border-radius:14px; max-width:430px; width:100%; box-shadow:0 12px 40px rgba(0,0,0,0.3); font-family:system-ui, sans-serif;">
+    <h2 style="margin:0 0 6px 0; color:#3d6f28;">👤 Qui es-tu ?</h2>
+    <p style="color:#777; font-size:13px; margin:0 0 18px 0;">Choisis ton profil pour personnaliser l'app.</p>
+
+    <!-- Étape 1 : choix rôle -->
+    <div id="pw-step1">
+      <button onclick="profileWizardChoose('patron')" style="display:block; width:100%; padding:14px; margin-bottom:10px; background:#5ba241; color:#fff; border:none; border-radius:10px; font-size:15px; font-weight:600; cursor:pointer;">
+        🟢 Alex (patron)
+      </button>
+      <button onclick="profileWizardChoose('ouvrier')" style="display:block; width:100%; padding:14px; background:#fff; color:#3d6f28; border:2px solid #5ba241; border-radius:10px; font-size:15px; font-weight:600; cursor:pointer;">
+        👷 Je suis un ouvrier
+      </button>
+    </div>
+
+    <!-- Étape 2 : mot de passe patron -->
+    <div id="pw-step-pwd" style="display:none;">
+      <p style="font-size:13px; color:#555; margin:0 0 12px;">Entre le mot de passe patron pour accéder au profil Alex.</p>
+      <input type="password" id="pw-password" placeholder="Mot de passe" style="width:100%; padding:12px; border:2px solid #e0e0e0; border-radius:8px; box-sizing:border-box; font-size:15px; margin-bottom:10px;">
+      <div id="pw-password-error" style="color:#c0392b; font-size:12px; margin-bottom:8px; display:none;">❌ Mot de passe incorrect</div>
+      <div style="display:flex; gap:8px;">
+        <button class="btn-add" style="flex:1;" onclick="profileWizardCheckPwd()">Valider</button>
+        <button class="btn-secondary" onclick="profileWizardBack()">Retour</button>
+      </div>
+    </div>
+
+    <!-- Étape 3 : nom + tarif ouvrier -->
+    <div id="pw-step-ouvrier" style="display:none;">
+      <div class="field" style="margin-bottom:10px;">
+        <label style="font-size:13px; color:#666;">Ton prénom</label>
+        <input type="text" id="pw-name" placeholder="Thibault" style="width:100%; padding:10px; border:1px solid #d4d4d4; border-radius:6px; box-sizing:border-box; font-size:15px;">
+      </div>
+      <div class="field" style="margin-bottom:10px;">
+        <label style="font-size:13px; color:#666;">Tarif jour (€)</label>
+        <input type="number" id="pw-rate" placeholder="250" min="0" step="1" style="width:100%; padding:10px; border:1px solid #d4d4d4; border-radius:6px; box-sizing:border-box; font-size:15px;">
+        <div style="font-size:11px; color:#888; margin-top:3px;">Optionnel : ne sert qu'à Alex pour calculer la rentabilité.</div>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button class="btn-add" style="flex:1;" onclick="profileWizardSaveOuvrier()">Valider</button>
+        <button class="btn-secondary" onclick="profileWizardBack()">Retour</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- Éléments de compatibilité JS (cachés, ne pas supprimer) -->
 <span id="backup-btn" style="display:none;"></span>
@@ -1795,6 +1870,13 @@ function loadData() {
       }
       // Migration silencieuse v20 : timestamp pour sync Drive
       if (!parsed._lastModified) parsed._lastModified = Date.now();
+      // Migration silencieuse v28 : multi-utilisateurs
+      if (parsed.currentUser === undefined) parsed.currentUser = null;
+      if (!Array.isArray(parsed.knownWorkers)) parsed.knownWorkers = [];
+      // userSessions sur chaque chantier (heures par personne via Google Calendar)
+      parsed.chantiers.forEach(ch => {
+        if (!Array.isArray(ch.userSessions)) ch.userSessions = [];
+      });
       return parsed;
     }
     return JSON.parse(JSON.stringify(DEFAULT_DATA));
@@ -1831,6 +1913,12 @@ const PAGE_PARENT = {
 const _subCurrent = { business: 'compta', catalogue: 'grille' };
 
 function showPage(page) {
+  // Mode ouvrier : seules pages autorisées = chantiers + parametres
+  if (typeof isWorker === 'function' && isWorker()) {
+    if (page !== 'chantiers' && page !== 'parametres') {
+      page = 'chantiers';
+    }
+  }
   // Si page cachée, rediriger vers la page wrapper + sous-onglet
   if (PAGE_PARENT[page]) {
     const { parent, sub } = PAGE_PARENT[page];
@@ -2398,15 +2486,25 @@ function renderChantiers() {
   const target = data.targetHourlyRate;
   const rateClass = avgRate >= target ? 'stat-ok' : avgRate >= target * 0.8 ? 'stat-warn' : 'stat-bad';
 
-  summary.innerHTML = `
-    <div class="chantier-stats">
-      <div><strong>${count}</strong> chantier(s)</div>
-      <div>CA total : <strong>${totalRev.toFixed(2)} € HT</strong></div>
-      <div>Marge totale : <strong>${totalProfit.toFixed(2)} € HT</strong></div>
-      <div>Heures travaillées : <strong>${totalHours.toFixed(1)} h</strong></div>
-      <div>Taux horaire moyen effectif : <span class="${rateClass}">${avgRate.toFixed(2)} €/h</span> (cible ${target} €/h)</div>
-    </div>
-  `;
+  if (typeof isPatron === 'function' && !isPatron()) {
+    // Mode ouvrier : pas de chiffres financiers
+    summary.innerHTML = `
+      <div class="chantier-stats">
+        <div><strong>${count}</strong> chantier(s)</div>
+        <div>Heures travaillées : <strong>${totalHours.toFixed(1)} h</strong></div>
+      </div>
+    `;
+  } else {
+    summary.innerHTML = `
+      <div class="chantier-stats">
+        <div><strong>${count}</strong> chantier(s)</div>
+        <div>CA total : <strong>${totalRev.toFixed(2)} € HT</strong></div>
+        <div>Marge totale : <strong>${totalProfit.toFixed(2)} € HT</strong></div>
+        <div>Heures travaillées : <strong>${totalHours.toFixed(1)} h</strong></div>
+        <div>Taux horaire moyen effectif : <span class="${rateClass}">${avgRate.toFixed(2)} €/h</span> (cible ${target} €/h)</div>
+      </div>
+    `;
+  }
 
   // Filtrer par statut
   const filtered = chantierStatutFilter
@@ -2431,25 +2529,26 @@ function renderChantiers() {
     const nomClient = escapeHtml(ch.client || (data.clients.find(cl => cl.id === ch.clientId)?.name) || '?');
     const typeBadge = `<span class="badge-${ch.type || 'perso'}">${(ch.type || 'perso') === 'babad' ? 'BABAD' : 'Perso'}</span>`;
     const statutBadge = `<span class="badge-${ch.statut || 'en_cours'}">${statutLabel[ch.statut || 'en_cours'] || ch.statut}</span>`;
+    const isPatronMode = (typeof isPatron === 'function' && isPatron());
     return `
       <div class="chantier-item">
         <div class="chantier-head">
           <div>
             <div class="chantier-title">${nomClient}${ch.devisId ? ' <span style="font-size:11px; color:#2ecc71;">depuis devis</span>' : ''}</div>
             <div class="chantier-badges">${typeBadge} ${statutBadge}</div>
-            <div class="chantier-meta">${ch.date}${ch.adresse ? ' — ' + escapeHtml(ch.adresse) : ''} — ${ch.hours}h${ch.materialCost ? ' — ' + ch.materialCost + '€ mat.' : ''}</div>
+            <div class="chantier-meta">${ch.date}${ch.adresse ? ' — ' + escapeHtml(ch.adresse) : ''} — ${ch.hours}h${(isPatronMode && ch.materialCost) ? ' — ' + ch.materialCost + '€ mat.' : ''}</div>
           </div>
           <div style="display:flex; gap:6px;">
             <button class="btn-secondary btn-small" onclick="viewChantier('${ch.id}')">Ouvrir</button>
-            <button class="btn-danger btn-small" onclick="removeChantier('${ch.id}')">Supprimer</button>
+            ${isPatronMode ? `<button class="btn-danger btn-small" onclick="removeChantier('${ch.id}')">Supprimer</button>` : ''}
           </div>
         </div>
-        <div class="chantier-stats">
+        ${isPatronMode ? `<div class="chantier-stats">
           <div>CA : <strong>${s.revenue.toFixed(2)} €</strong></div>
           <div>Marge : <strong>${s.grossProfit.toFixed(2)} €</strong></div>
           ${!s.isBabad ? `<div>Taux effectif : <span class="${rateClass}">${s.effectiveHourlyRate.toFixed(2)} €/h</span></div>` : ''}
           <div>${varLabel}</div>
-        </div>
+        </div>` : ''}
         ${ch.notes ? `<div style="margin-top:6px; font-size:13px; color:#666; font-style:italic;">${escapeHtml(ch.notes)}</div>` : ''}
         ${ch.prestations && ch.prestations.length > 0 ? `
         <div style="margin-top:6px; font-size:12px; color:#888;">
@@ -6145,7 +6244,7 @@ function renderChantierDetail(ch) {
       </div>
     </div>
 
-    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:10px; margin-bottom:18px;">
+    <div style="display:${isPatron() ? 'grid' : 'none'}; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:10px; margin-bottom:18px;">
       <div style="padding:10px 12px; background:#fafcf7; border-left:3px solid #5ba241; border-radius:0 6px 6px 0;">
         <div style="font-size:11px; color:#666; text-transform:uppercase;">CA HT</div>
         <div style="font-size:20px; font-weight:700; color:#3d6f28;">${caHT.toFixed(2)} €</div>
@@ -6176,6 +6275,8 @@ function renderChantierDetail(ch) {
         <div style="font-size:11px; color:#888;">${caHT > 0 ? margeNettePercent.toFixed(1) + '% du CA' : '-'}</div>
       </div>
     </div>
+
+    ${isPatron() ? renderUserSessionsBreakdown(ch) : ''}
 
     <!-- Champs editables -->
     <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
@@ -9461,6 +9562,578 @@ function resetReviewRequest(chId) {
 
 // ============================================================
 // FIN MODULE MARKETING
+// ============================================================
+
+// ============================================================
+// MODULE MULTI-USER v28
+// Profil utilisateur, ouvriers, partage timer via Google Calendar
+// ============================================================
+
+const TIMER_BLOCK_START = '=== TIMERS ALEX\'TERIEUR ===';
+const TIMER_BLOCK_END = '=== FIN TIMERS ===';
+// Mot de passe patron — même hash que l'auth principale (.olivia920142)
+const PROFILE_PATRON_HASH = '0739a2aecabac78a6f32a2fc8366c7dd1a786f9fa19a5060f668359bbd74d7fa';
+
+// Cache description Google event (clé = eventId)
+const _eventDescCache = {};
+const EVENT_DESC_CACHE_MS = 2 * 60 * 1000; // 2 min
+
+function isPatron() {
+  // Si pas encore de profil défini → patron par défaut (rétrocompat)
+  if (!data.currentUser) return true;
+  return !!data.currentUser.isPatron;
+}
+
+function isWorker() {
+  return !!(data.currentUser && !data.currentUser.isPatron);
+}
+
+function getCurrentUserName() {
+  return (data.currentUser && data.currentUser.name) || 'Alex';
+}
+
+async function sha256Hex(text) {
+  const buf = new TextEncoder().encode(text);
+  const hash = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
+/* -------- Wizard profil -------- */
+
+let _profileWizardForceOpen = false;
+
+function openProfileWizard(force) {
+  _profileWizardForceOpen = !!force;
+  // Si patron actuel et force, demander mot de passe d'abord
+  if (force && isPatron()) {
+    profileWizardShowStep('pwd');
+  } else {
+    profileWizardShowStep('1');
+  }
+  const ov = document.getElementById('profile-wizard-overlay');
+  if (ov) ov.style.display = 'flex';
+}
+
+function closeProfileWizard() {
+  const ov = document.getElementById('profile-wizard-overlay');
+  if (ov) ov.style.display = 'none';
+}
+
+function profileWizardShowStep(step) {
+  ['1','pwd','ouvrier'].forEach(s => {
+    const el = document.getElementById('pw-step' + (s === '1' ? '1' : '-' + s));
+    if (el) el.style.display = (s === step) ? 'block' : 'none';
+  });
+  if (step === 'pwd') {
+    setTimeout(() => {
+      const inp = document.getElementById('pw-password');
+      if (inp) { inp.value = ''; inp.focus(); }
+      const err = document.getElementById('pw-password-error');
+      if (err) err.style.display = 'none';
+    }, 50);
+  }
+  if (step === 'ouvrier') {
+    setTimeout(() => {
+      const n = document.getElementById('pw-name');
+      if (n) n.focus();
+    }, 50);
+  }
+}
+
+function profileWizardBack() {
+  profileWizardShowStep('1');
+}
+
+function profileWizardChoose(role) {
+  if (role === 'patron') {
+    profileWizardShowStep('pwd');
+  } else {
+    profileWizardShowStep('ouvrier');
+  }
+}
+
+async function profileWizardCheckPwd() {
+  const inp = document.getElementById('pw-password');
+  const err = document.getElementById('pw-password-error');
+  if (!inp || !inp.value) return;
+  const h = await sha256Hex(inp.value);
+  if (h !== PROFILE_PATRON_HASH) {
+    if (err) err.style.display = 'block';
+    inp.value = '';
+    inp.focus();
+    return;
+  }
+  // Valide → enregistre profil patron
+  data.currentUser = { name: 'Alex', isPatron: true, hourlyRate: 50, asJourCount: false };
+  saveData();
+  closeProfileWizard();
+  toast('🟢 Profil patron activé');
+  applyUserModeUI();
+  syncProfileUI();
+}
+
+function profileWizardSaveOuvrier() {
+  const name = (document.getElementById('pw-name').value || '').trim();
+  const rate = parseFloat(document.getElementById('pw-rate').value) || 0;
+  if (!name) { toast('Renseigne ton prénom'); return; }
+  data.currentUser = {
+    name: name,
+    isPatron: false,
+    hourlyRate: rate,
+    asJourCount: true
+  };
+  saveData();
+  closeProfileWizard();
+  toast('👷 Bienvenue ' + name + ' !');
+  applyUserModeUI();
+  syncProfileUI();
+}
+
+/* -------- Mode UI (patron vs ouvrier) -------- */
+
+function applyUserModeUI() {
+  const worker = isWorker();
+  // Masquer onglets si ouvrier (sauf Chantiers + Paramètres)
+  document.querySelectorAll('.tab[data-page]').forEach(tab => {
+    const pg = tab.getAttribute('data-page');
+    if (worker && pg !== 'chantiers' && pg !== 'parametres') {
+      tab.style.display = 'none';
+    } else {
+      // Restaurer affichage par défaut (les onglets cachés à l'origine restent cachés via leur propre style inline)
+      const originalHidden = ['devis','kits','grille','fournisseurs','compta','gravier','marketing'];
+      if (!originalHidden.includes(pg)) tab.style.display = '';
+    }
+  });
+  // Cacher carte "Ouvriers" si pas patron
+  const cardKW = document.getElementById('card-known-workers');
+  if (cardKW) cardKW.style.display = (worker || !data.currentUser) ? 'none' : '';
+  // Si ouvrier et page actuelle interdite, forcer chantiers
+  if (worker && currentPage !== 'chantiers' && currentPage !== 'parametres') {
+    showPage('chantiers');
+  }
+  // Re-render fiche détail si ouvert (pour afficher/masquer prix)
+  if (typeof renderChantiers === 'function' && currentPage === 'chantiers') {
+    renderChantiers();
+  }
+}
+
+function syncProfileUI() {
+  const el = document.getElementById('profile-info');
+  if (!el) return;
+  if (!data.currentUser) {
+    el.innerHTML = '<span style="color:#888;">Aucun profil — clique sur "Changer de profil" pour configurer</span>';
+    return;
+  }
+  const u = data.currentUser;
+  if (u.isPatron) {
+    el.innerHTML = '🟢 <strong>' + escapeHtml(u.name || 'Alex') + '</strong> (patron)';
+  } else {
+    el.innerHTML = '👷 <strong>' + escapeHtml(u.name || '') + '</strong> (ouvrier)' +
+      (u.hourlyRate > 0 ? ' · ' + u.hourlyRate + '€/jour' : '');
+  }
+}
+
+/* -------- Carnet ouvriers -------- */
+
+function renderKnownWorkers() {
+  const cont = document.getElementById('known-workers-list');
+  if (!cont) return;
+  if (!Array.isArray(data.knownWorkers)) data.knownWorkers = [];
+  if (data.knownWorkers.length === 0) {
+    cont.innerHTML = '<div style="color:#888; font-size:13px; padding:6px 0;">Aucun ouvrier enregistré.</div>';
+    return;
+  }
+  cont.innerHTML = data.knownWorkers.map(w => `
+    <div style="display:flex; gap:8px; align-items:center; padding:6px 8px; border:1px solid #eee; border-radius:6px; margin-bottom:5px; background:#fafafa;">
+      <span style="font-weight:600;">${escapeHtml(w.name || '?')}</span>
+      <span style="font-size:12px; color:#666;">${escapeHtml(w.email || '')}</span>
+      <span style="font-size:12px; color:#3d6f28;">${(w.tarifJour || 0)}€/jour</span>
+      <button class="btn-danger btn-small" style="margin-left:auto;" onclick="removeKnownWorker('${w.id}')">✕</button>
+    </div>
+  `).join('');
+}
+
+function addKnownWorker() {
+  const name = (document.getElementById('kw-name').value || '').trim();
+  const email = (document.getElementById('kw-email').value || '').trim().toLowerCase();
+  const tarif = parseFloat(document.getElementById('kw-rate').value) || 0;
+  if (!name) { toast('Renseigne le nom'); return; }
+  if (!Array.isArray(data.knownWorkers)) data.knownWorkers = [];
+  data.knownWorkers.push({
+    id: 'kw_' + Date.now() + '_' + Math.random().toString(36).slice(2,5),
+    name: name,
+    email: email,
+    tarifJour: tarif
+  });
+  saveData();
+  document.getElementById('kw-name').value = '';
+  document.getElementById('kw-email').value = '';
+  document.getElementById('kw-rate').value = '';
+  renderKnownWorkers();
+  toast('Ouvrier ajouté');
+}
+
+function removeKnownWorker(id) {
+  if (!confirm('Supprimer cet ouvrier de la liste ?')) return;
+  data.knownWorkers = (data.knownWorkers || []).filter(w => w.id !== id);
+  saveData();
+  renderKnownWorkers();
+}
+
+/* -------- Description Google Calendar : parser + writer -------- */
+
+function parseTimerBlock(description) {
+  // Renvoie { lines: [...], before: '...', after: '...' }
+  const desc = description || '';
+  const startIdx = desc.indexOf(TIMER_BLOCK_START);
+  const endIdx = desc.indexOf(TIMER_BLOCK_END);
+  if (startIdx < 0 || endIdx < 0 || endIdx < startIdx) {
+    return { lines: [], before: '', after: desc };
+  }
+  const before = '';
+  const blockContent = desc.substring(startIdx + TIMER_BLOCK_START.length, endIdx).trim();
+  const after = desc.substring(endIdx + TIMER_BLOCK_END.length).replace(/^\s*\n?/, '');
+  const lines = blockContent.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  return { lines, before: desc.substring(0, startIdx).replace(/\s*$/, ''), after };
+}
+
+function buildDescriptionWithBlock(parsed) {
+  const block = TIMER_BLOCK_START + '\n' +
+    (parsed.lines.length > 0 ? parsed.lines.join('\n') + '\n' : '') +
+    TIMER_BLOCK_END;
+  return (parsed.before ? parsed.before + '\n' : '') + block + (parsed.after ? '\n' + parsed.after : '');
+}
+
+// Parse les sessions terminées du bloc TIMERS
+// Format ligne : [Nom] HH:MM → HH:MM (Xh) DD/MM/YYYY  (date optionnelle, on prend date event sinon)
+//             ou : [Nom] début HH:MM le DD/MM/YYYY    (en cours, ignorée)
+function parseUserSessionsFromDescription(description, eventStartIso) {
+  const { lines } = parseTimerBlock(description);
+  const sessions = [];
+  const dateBase = eventStartIso ? new Date(eventStartIso) : new Date();
+  lines.forEach(line => {
+    // Session terminée : [Nom] HH:MM → HH:MM (Xh[YYm]) [DD/MM/YYYY]
+    let m = line.match(/^\[([^\]]+)\]\s+(\d{1,2}):(\d{2})\s*[→>\-]+\s*(\d{1,2}):(\d{2})\s*\(([\dh,.\s mn]+)\)\s*(\d{2}\/\d{2}\/\d{4})?/);
+    if (m) {
+      const userName = m[1].trim();
+      const sH = parseInt(m[2], 10), sM = parseInt(m[3], 10);
+      const eH = parseInt(m[4], 10), eM = parseInt(m[5], 10);
+      const durStr = m[6];
+      const dateStr = m[7];
+      let day, month, year;
+      if (dateStr) {
+        const dm = dateStr.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+        if (dm) { day = +dm[1]; month = +dm[2] - 1; year = +dm[3]; }
+      }
+      if (day === undefined) {
+        day = dateBase.getDate();
+        month = dateBase.getMonth();
+        year = dateBase.getFullYear();
+      }
+      const start = new Date(year, month, day, sH, sM, 0).toISOString();
+      // Gérer chevauchement minuit : si endTime < startTime, ajouter 1 jour
+      let endDate = new Date(year, month, day, eH, eM, 0);
+      const startDate = new Date(year, month, day, sH, sM, 0);
+      if (endDate < startDate) endDate = new Date(year, month, day + 1, eH, eM, 0);
+      const end = endDate.toISOString();
+      // Calcul durée
+      let duration = (endDate.getTime() - startDate.getTime()) / 3600000;
+      duration = Math.round(duration * 100) / 100;
+      sessions.push({ userName, start, end, duration });
+    }
+  });
+  return sessions;
+}
+
+// Récupère la description d'un event (avec cache 2min)
+async function fetchEventDescription(eventId, useCache) {
+  if (useCache !== false) {
+    const c = _eventDescCache[eventId];
+    if (c && (Date.now() - c.fetchedAt) < EVENT_DESC_CACHE_MS) return c;
+  }
+  if (!googleIsConnected()) return null;
+  try {
+    const url = 'https://www.googleapis.com/calendar/v3/calendars/' + getGoogleCalendarId()
+      + '/events/' + encodeURIComponent(eventId);
+    const r = await googleApi(url);
+    if (!r.ok) return null;
+    const ev = await r.json();
+    const cached = { description: ev.description || '', start: ev.start, summary: ev.summary, fetchedAt: Date.now(), etag: ev.etag };
+    _eventDescCache[eventId] = cached;
+    return cached;
+  } catch(e) { console.warn('fetchEventDescription error', e); return null; }
+}
+
+// PATCH la description d'un event
+async function patchEventDescription(eventId, newDescription) {
+  if (!googleIsConnected()) return false;
+  try {
+    const url = 'https://www.googleapis.com/calendar/v3/calendars/' + getGoogleCalendarId()
+      + '/events/' + encodeURIComponent(eventId);
+    const r = await googleApi(url, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ description: newDescription })
+    });
+    if (!r.ok) {
+      console.warn('patchEventDescription failed', r.status);
+      return false;
+    }
+    // invalider cache
+    delete _eventDescCache[eventId];
+    return true;
+  } catch(e) { console.warn('patchEventDescription error', e); return false; }
+}
+
+function fmtTimeHM(d) {
+  return String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+}
+
+function fmtDateFR(d) {
+  return String(d.getDate()).padStart(2,'0') + '/' + String(d.getMonth()+1).padStart(2,'0') + '/' + d.getFullYear();
+}
+
+function fmtDurationHm(durationH) {
+  const h = Math.floor(durationH);
+  const m = Math.round((durationH - h) * 60);
+  if (m === 0) return h + 'h';
+  return h + 'h' + String(m).padStart(2,'0');
+}
+
+// Ajoute une ligne "début" pour user courant
+async function appendStartLineToEvent(eventId) {
+  if (!eventId || !googleIsConnected()) return;
+  const userName = getCurrentUserName();
+  const cached = await fetchEventDescription(eventId, false);
+  if (!cached) return;
+  const parsed = parseTimerBlock(cached.description);
+  const now = new Date();
+  // Vérifier qu'aucune ligne en cours pour ce user
+  const hasActive = parsed.lines.some(l => {
+    const m = l.match(/^\[([^\]]+)\]\s+début\s/);
+    return m && m[1].trim() === userName;
+  });
+  if (hasActive) return; // déjà en cours
+  parsed.lines.push('[' + userName + '] début ' + fmtTimeHM(now) + ' le ' + fmtDateFR(now));
+  const newDesc = buildDescriptionWithBlock(parsed);
+  await patchEventDescription(eventId, newDesc);
+}
+
+// Convertit la dernière ligne "début" non terminée du user courant en ligne complète
+async function appendEndLineToEvent(eventId, sessionStartIso, durationH) {
+  if (!eventId || !googleIsConnected()) return;
+  const userName = getCurrentUserName();
+  const cached = await fetchEventDescription(eventId, false);
+  if (!cached) return;
+  const parsed = parseTimerBlock(cached.description);
+  // Cherche dernière ligne "[user] début" sans fin → la remplace
+  let replaced = false;
+  for (let i = parsed.lines.length - 1; i >= 0; i--) {
+    const l = parsed.lines[i];
+    const m = l.match(/^\[([^\]]+)\]\s+début\s+(\d{1,2}:\d{2})(?:\s+le\s+(\d{2}\/\d{2}\/\d{4}))?/);
+    if (m && m[1].trim() === userName) {
+      const startTime = m[2];
+      const startDate = m[3] || fmtDateFR(new Date(sessionStartIso || Date.now()));
+      const endDate = new Date();
+      const endTime = fmtTimeHM(endDate);
+      const dur = durationH || 0;
+      parsed.lines[i] = '[' + userName + '] ' + startTime + ' → ' + endTime + ' (' + fmtDurationHm(dur) + ') ' + startDate;
+      replaced = true;
+      break;
+    }
+  }
+  if (!replaced) {
+    // Aucune ligne début trouvée → ajouter ligne complète directe avec start = sessionStartIso
+    const startD = sessionStartIso ? new Date(sessionStartIso) : new Date();
+    const endD = new Date();
+    parsed.lines.push('[' + userName + '] ' + fmtTimeHM(startD) + ' → ' + fmtTimeHM(endD) + ' (' + fmtDurationHm(durationH || 0) + ') ' + fmtDateFR(startD));
+  }
+  const newDesc = buildDescriptionWithBlock(parsed);
+  await patchEventDescription(eventId, newDesc);
+}
+
+/* -------- Lecture des userSessions sur un chantier -------- */
+
+async function refreshChantierUserSessions(ch, force) {
+  if (!ch || !ch.googleEventId) return null;
+  if (!googleIsConnected()) return null;
+  const cached = await fetchEventDescription(ch.googleEventId, !force);
+  if (!cached) return null;
+  const sessions = parseUserSessionsFromDescription(
+    cached.description,
+    cached.start && cached.start.dateTime ? cached.start.dateTime : (cached.start && cached.start.date)
+  );
+  ch.userSessions = sessions;
+  saveData();
+  return sessions;
+}
+
+// Calcule heures + coût main d'œuvre par utilisateur
+function computeUserSessionsBreakdown(ch) {
+  const list = (ch && ch.userSessions) || [];
+  const byUser = {};
+  list.forEach(s => {
+    const k = (s.userName || '?').toLowerCase();
+    if (!byUser[k]) byUser[k] = { name: s.userName, hours: 0, sessions: 0 };
+    byUser[k].hours += (s.duration || 0);
+    byUser[k].sessions++;
+  });
+  // Enrichir avec tarif (knownWorkers ou patron)
+  const me = data.currentUser;
+  Object.values(byUser).forEach(u => {
+    const lname = (u.name || '').toLowerCase();
+    if (me && me.name && me.name.toLowerCase() === lname && me.isPatron) {
+      u.hourlyRate = me.hourlyRate || data.targetHourlyRate || 45;
+      u.tarifJour = 0;
+      u.cost = u.hours * u.hourlyRate;
+      u.tarifLabel = u.hourlyRate + '€/h';
+    } else {
+      const w = (data.knownWorkers || []).find(x => (x.name || '').toLowerCase() === lname);
+      if (w && w.tarifJour > 0) {
+        // Convertir heures → jours (8h = 1 jour, on facture la fraction)
+        const days = u.hours / 8;
+        u.tarifJour = w.tarifJour;
+        u.cost = days * w.tarifJour;
+        u.tarifLabel = w.tarifJour + '€/j';
+      } else {
+        u.cost = 0;
+        u.tarifLabel = '?';
+      }
+    }
+  });
+  return Object.values(byUser).sort((a,b) => b.hours - a.hours);
+}
+
+function renderUserSessionsBreakdown(ch) {
+  const breakdown = computeUserSessionsBreakdown(ch);
+  if (breakdown.length === 0) return '';
+  const totalCost = breakdown.reduce((s,u) => s + (u.cost || 0), 0);
+  return `
+    <div style="margin-top:14px; padding:10px 12px; background:#f5f9f2; border-left:3px solid #5ba241; border-radius:0 6px 6px 0;">
+      <div style="font-weight:600; color:#3d6f28; margin-bottom:6px;">👥 Main d'œuvre détaillée</div>
+      ${breakdown.map(u => `
+        <div style="display:flex; justify-content:space-between; gap:10px; padding:3px 0; font-size:13px;">
+          <span><strong>${escapeHtml(u.name)}</strong> · ${u.hours.toFixed(2)}h × ${u.tarifLabel}</span>
+          <span style="font-weight:600; color:#3498db;">${u.cost.toFixed(2)} €</span>
+        </div>
+      `).join('')}
+      <div style="display:flex; justify-content:space-between; gap:10px; padding-top:6px; margin-top:5px; border-top:1px dashed #ccc; font-size:13px;">
+        <span style="font-weight:600;">Total main d'œuvre</span>
+        <span style="font-weight:700; color:#3498db;">${totalCost.toFixed(2)} €</span>
+      </div>
+    </div>
+  `;
+}
+
+/* -------- Hook Init -------- */
+
+function initMultiUser() {
+  // Si pas de profil → afficher wizard
+  if (!data.currentUser) {
+    setTimeout(() => openProfileWizard(false), 600);
+  }
+  applyUserModeUI();
+  syncProfileUI();
+  renderKnownWorkers();
+}
+
+// Patch syncParametresUI pour rafraîchir profil + ouvriers
+(function patchSyncParametres() {
+  if (typeof syncParametresUI !== 'function') return;
+  const orig = syncParametresUI;
+  syncParametresUI = function() {
+    orig.apply(this, arguments);
+    syncProfileUI();
+    renderKnownWorkers();
+  };
+})();
+
+// Patch des timers pour écrire dans la description Google Calendar (multi-user)
+(function patchTimers() {
+  // timerStartSession : après démarrage local, ajouter ligne "début" dans event Google si présent
+  if (typeof window.timerStartSession === 'function') {
+    const origStart = window.timerStartSession;
+    window.timerStartSession = function(chId) {
+      const ch = data.chantiers.find(c => c.id === chId);
+      origStart(chId);
+      if (ch && ch.googleEventId) {
+        appendStartLineToEvent(ch.googleEventId).catch(e => console.warn('appendStartLineToEvent err', e));
+      }
+    };
+  }
+  // timerStopSession : avant l'arrêt, capturer infos pour PATCH après
+  if (typeof window.timerStopSession === 'function') {
+    const origStop = window.timerStopSession;
+    window.timerStopSession = function(chId) {
+      const ch = data.chantiers.find(c => c.id === chId);
+      const startBefore = ch && ch.activeSession ? ch.activeSession.start : null;
+      const eventIdBefore = ch && (ch.googleEventId || (ch.activeSession && ch.activeSession.googleEventId));
+      origStop(chId);
+      // Récupérer la dernière session ajoutée pour avoir la durée
+      if (ch && eventIdBefore) {
+        const lastSession = (ch.sessions || [])[(ch.sessions || []).length - 1];
+        const dur = lastSession ? (lastSession.duration || 0) : 0;
+        appendEndLineToEvent(eventIdBefore, startBefore, dur).catch(e => console.warn('appendEndLineToEvent err', e));
+      }
+    };
+  }
+  // startTimerFromGoogleEvent : déjà lié à un event, push ligne début
+  if (typeof window.startTimerFromGoogleEvent === 'function') {
+    const orig = window.startTimerFromGoogleEvent;
+    window.startTimerFromGoogleEvent = function(eventId, eventTitle, eventType) {
+      orig(eventId, eventTitle, eventType);
+      if (eventId) {
+        // Petit delay pour laisser saveData/render finir
+        setTimeout(() => {
+          appendStartLineToEvent(eventId).catch(e => console.warn(e));
+        }, 200);
+      }
+    };
+  }
+  // stopTimerFromGoogleEvent : capter avant arrêt
+  if (typeof window.stopTimerFromGoogleEvent === 'function') {
+    const orig = window.stopTimerFromGoogleEvent;
+    window.stopTimerFromGoogleEvent = function(eventId) {
+      const ch = findActiveChantierForEvent(eventId);
+      const startBefore = ch && ch.activeSession ? ch.activeSession.start : null;
+      orig(eventId);
+      if (ch && eventId) {
+        setTimeout(() => {
+          const lastSession = (ch.sessions || [])[(ch.sessions || []).length - 1];
+          const dur = lastSession ? (lastSession.duration || 0) : 0;
+          appendEndLineToEvent(eventId, startBefore, dur).catch(e => console.warn(e));
+        }, 200);
+      }
+    };
+  }
+})();
+
+// Patch viewChantier pour rafraîchir userSessions depuis Google Calendar
+(function patchViewChantier() {
+  if (typeof window.viewChantier !== 'function') return;
+  const orig = window.viewChantier;
+  window.viewChantier = function(id) {
+    orig(id);
+    const ch = data.chantiers.find(c => c.id === id);
+    if (ch && ch.googleEventId && isPatron() && googleIsConnected()) {
+      // Async refresh des userSessions
+      refreshChantierUserSessions(ch, false).then(sessions => {
+        if (sessions && sessions.length > 0) {
+          // Re-render fiche pour afficher la breakdown mise à jour
+          if (typeof renderChantierDetail === 'function') {
+            renderChantierDetail(ch);
+          }
+        }
+      }).catch(e => console.warn('refresh userSessions err', e));
+    }
+  };
+})();
+
+// Lancer init après chargement complet (DEFAULT_DATA + functions prêtes)
+setTimeout(initMultiUser, 100);
+
+// ============================================================
+// FIN MODULE MULTI-USER
 // ============================================================
 </script>
 </body>
