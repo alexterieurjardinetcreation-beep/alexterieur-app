@@ -7900,7 +7900,122 @@ function planningWeekToday() {
   renderPlanningHebdo();
 }
 
-function renderPlanningHebdo() {
+function planningRefresh() {
+  _planningWeekEventsCache = {};
+  renderPlanningHebdo(true);
+}
+
+/* ---- Cache events Google par semaine (5 min) ---- */
+let _planningWeekEventsCache = {}; // { "YYYY-MM-DD_YYYY-MM-DD": { events, fetchedAt } }
+const PLANNING_WEEK_CACHE_MS = 5 * 60 * 1000;
+
+async function fetchWeekCalendarEvents(monday, sunday, force) {
+  const key = monday.toISOString().slice(0,10) + '_' + sunday.toISOString().slice(0,10);
+  const cached = _planningWeekEventsCache[key];
+  if (!force && cached && (Date.now() - cached.fetchedAt) < PLANNING_WEEK_CACHE_MS) {
+    return cached.events;
+  }
+  if (typeof googleIsConnected !== 'function' || !googleIsConnected()) return null;
+  const url = 'https://www.googleapis.com/calendar/v3/calendars/' + getGoogleCalendarId() + '/events'
+    + '?timeMin=' + encodeURIComponent(monday.toISOString())
+    + '&timeMax=' + encodeURIComponent(sunday.toISOString())
+    + '&singleEvents=true&orderBy=startTime&maxResults=250';
+  try {
+    const r = await googleApi(url);
+    if (!r.ok) throw new Error('Calendar week list failed: ' + r.status);
+    const j = await r.json();
+    const items = (j.items || []).filter(ev => {
+      // Exclure anniversaires Google
+      if (ev.eventType === 'birthday') return false;
+      if (ev.summary && /^Anniversaire/i.test(ev.summary)) return false;
+      // Exclure les événements déclinés
+      const me = (ev.attendees || []).find(a => a.self);
+      if (me && me.responseStatus === 'declined') return false;
+      return true;
+    });
+    _planningWeekEventsCache[key] = { events: items, fetchedAt: Date.now() };
+    return items;
+  } catch(e) {
+    console.warn('fetchWeekCalendarEvents error', e);
+    return null;
+  }
+}
+
+/* ---- Conversion event Google → chantier (préremplit le formulaire) ---- */
+function convertGoogleEventToChantier(eventId) {
+  // Retrouve l'event dans tous les caches semaine
+  let ev = null;
+  Object.values(_planningWeekEventsCache).forEach(c => {
+    if (ev) return;
+    const found = (c.events || []).find(e => e.id === eventId);
+    if (found) ev = found;
+  });
+  if (!ev) { toast('Event introuvable, rafraîchis le planning'); return; }
+
+  const title = (ev.summary || 'Sans titre').trim();
+  const isBabad = /babad/i.test(title);
+  const clientName = isBabad ? 'BABAD' : title;
+
+  // Date début / fin
+  const startISO = (ev.start && ev.start.date) || (ev.start && ev.start.dateTime) || '';
+  const endISO = (ev.end && ev.end.date) || (ev.end && ev.end.dateTime) || '';
+  const dateStart = startISO ? startISO.slice(0,10) : new Date().toISOString().slice(0,10);
+  let dateEnd = endISO ? endISO.slice(0,10) : '';
+  // Pour un all-day, Google met la date de fin = jour suivant. On corrige.
+  if (ev.end && ev.end.date && dateEnd) {
+    const dEnd = new Date(dateEnd + 'T00:00:00');
+    dEnd.setDate(dEnd.getDate() - 1);
+    dateEnd = dEnd.toISOString().slice(0,10);
+  }
+  if (dateEnd && dateEnd <= dateStart) dateEnd = '';
+
+  // Trouver/créer le client
+  let clientRec = (data.clients || []).find(c => (c.name || '').toLowerCase() === clientName.toLowerCase());
+  if (!clientRec) {
+    clientRec = {
+      id: 'cl_' + Date.now() + '_' + Math.random().toString(36).slice(2,6),
+      name: clientName,
+      address: ev.location || '',
+      phone: '', email: '', notes: '',
+      createdAt: new Date().toISOString()
+    };
+    data.clients.push(clientRec);
+  }
+
+  const chantier = {
+    id: 'ch_' + Date.now(),
+    client: clientName,
+    clientId: clientRec.id,
+    date: dateStart,
+    dateFin: dateEnd || undefined,
+    adresse: ev.location || (clientRec.address || ''),
+    type: isBabad ? 'babad' : 'perso',
+    statut: 'planifie',
+    montantHT: 0,
+    hours: 0,
+    materialCost: 0,
+    materielLibre: '',
+    notes: 'Créé depuis Google Agenda · ' + title,
+    prestations: [],
+    achats: [],
+    photos: [],
+    stockConsume: [],
+    sessions: [],
+    activeSession: null,
+    soustraitants: [],
+    googleEventId: eventId
+  };
+  data.chantiers.push(chantier);
+  saveData();
+  toast('🟩 Chantier créé depuis Google · ' + clientName);
+  // Rafraîchit le planning et ouvre le chantier
+  if (typeof renderChantiers === 'function') renderChantiers();
+  setTimeout(() => {
+    if (typeof viewChantier === 'function') viewChantier(chantier.id);
+  }, 80);
+}
+
+async function renderPlanningHebdo(forceRefresh) {
   const el = document.getElementById('planning-hebdo-content');
   if (!el) return;
 
@@ -7918,6 +8033,37 @@ function renderPlanningHebdo() {
     return dates.some(d => d >= monday && d <= sunday);
   });
 
+  const todayStr = (new Date()).toISOString().slice(0,10);
+  const isCurrentWeek = (_planningWeekOffset === 0);
+  const mondayStr = monday.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  const sundayStr = sunday.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  const googleConnected = (typeof googleIsConnected === 'function' && googleIsConnected());
+
+  // ---- Récupérer events Google de la semaine (filtre déjà ceux liés à un chantier) ----
+  let googleEvents = [];
+  let googleStatus = 'off'; // off | loading | ok | err
+  if (googleConnected) {
+    const cached = _planningWeekEventsCache[monday.toISOString().slice(0,10) + '_' + sunday.toISOString().slice(0,10)];
+    if (cached && !forceRefresh) {
+      googleEvents = cached.events || [];
+      googleStatus = 'ok';
+    } else {
+      // Affichage immédiat avec un placeholder, puis fetch async
+      renderPlanningSkeleton(el, monday, sunday, chantiers, days, dayLabels, todayStr, isCurrentWeek, mondayStr, sundayStr, googleConnected, 'loading');
+      const fetched = await fetchWeekCalendarEvents(monday, sunday, forceRefresh === true);
+      if (fetched === null) googleStatus = 'err';
+      else { googleEvents = fetched; googleStatus = 'ok'; }
+      // Si offset a changé pendant le fetch, on annule l'affichage (course condition)
+      const { monday: m2, sunday: s2 } = getPlanningWeekBounds(_planningWeekOffset);
+      if (m2.getTime() !== monday.getTime() || s2.getTime() !== sunday.getTime()) return;
+    }
+  }
+
+  // Filtre les events qui correspondent déjà à un chantier de l'app (par googleEventId)
+  const linkedEventIds = new Set((data.chantiers || []).map(c => c.googleEventId).filter(Boolean));
+  const googleEventsToShow = googleEvents.filter(ev => !linkedEventIds.has(ev.id));
+
+  // ---- Construction des lignes (utilisateurs) ----
   const rows = planningAllRows();
   const rowsActives = rows.filter(r => {
     return chantiers.some(ch => {
@@ -7926,9 +8072,6 @@ function renderPlanningHebdo() {
     });
   });
   const finalRows = rowsActives.length > 0 ? rowsActives : [rows[0]];
-
-  const todayStr = (new Date()).toISOString().slice(0,10);
-  const isCurrentWeek = (_planningWeekOffset === 0);
 
   const headerCells = days.map((d, i) => {
     const dStr = d.toISOString().slice(0,10);
@@ -7970,6 +8113,45 @@ function renderPlanningHebdo() {
     `;
   }).join('');
 
+  // ---- Ligne Google (events sans chantier) ----
+  let googleRowHtml = '';
+  if (googleEventsToShow.length > 0) {
+    const evCells = days.map(d => {
+      const dStr = d.toISOString().slice(0,10);
+      const isToday = (dStr === todayStr);
+      const evsForCell = googleEventsToShow.filter(ev => {
+        const startISO = (ev.start && ev.start.date) || (ev.start && ev.start.dateTime) || '';
+        const endISO = (ev.end && ev.end.date) || (ev.end && ev.end.dateTime) || '';
+        if (!startISO) return false;
+        const sDay = startISO.slice(0,10);
+        // Pour un all-day, end.date est exclusif (jour suivant)
+        let eDay = endISO ? endISO.slice(0,10) : sDay;
+        if (ev.end && ev.end.date && eDay) {
+          const dEnd = new Date(eDay + 'T00:00:00');
+          dEnd.setDate(dEnd.getDate() - 1);
+          eDay = dEnd.toISOString().slice(0,10);
+        }
+        return dStr >= sDay && dStr <= eDay;
+      });
+      if (evsForCell.length === 0) {
+        return `<div style="min-height:34px; border:1px dashed #e0e0e0; border-radius:4px; ${isToday ? 'background:#fffbea;' : ''}"></div>`;
+      }
+      const blocks = evsForCell.map(ev => {
+        const safeId = String(ev.id).replace(/'/g, "\\'");
+        const tt = escapeHtml(ev.summary || '(Sans titre)');
+        const safeName = tt.slice(0, 14);
+        const bg = `repeating-linear-gradient(45deg, #b0b0b0, #b0b0b0 4px, #c8c8c8 4px, #c8c8c8 8px)`;
+        return `<div onclick="convertGoogleEventToChantier('${safeId}')" title="${tt} · clique pour convertir en chantier" style="cursor:pointer; background:${bg}; color:#fff; padding:3px 5px; border-radius:3px; font-size:11px; font-weight:600; line-height:1.1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-bottom:2px; border:1px solid #888;">📅 ${safeName}</div>`;
+      }).join('');
+      return `<div style="min-height:34px; padding:1px; ${isToday ? 'background:#fffbea; border-radius:4px;' : ''}">${blocks}</div>`;
+    }).join('');
+    googleRowHtml = `
+      <div style="font-weight:600; font-size:13px; color:#666; padding:8px 4px; border-right:1px solid #eee;">📅 Google <span style="background:#888;color:#fff;padding:1px 4px;border-radius:3px;font-size:10px;">G</span></div>
+      ${evCells}
+    `;
+  }
+
+  // ---- Légende chantiers ----
   const legendHtml = chantiers.length > 0 ? chantiers.map(ch => {
     const color = planningColorForChantier(ch.id);
     const dates = planningChantierDates(ch).filter(d => d >= monday && d <= sunday);
@@ -7987,16 +8169,46 @@ function renderPlanningHebdo() {
     </div>`;
   }).join('') : '<div style="color:#888; font-size:13px; font-style:italic;">Aucun chantier programmé cette semaine.</div>';
 
-  const mondayStr = monday.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
-  const sundayStr = sunday.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  // ---- Légende events Google ----
+  let googleLegendHtml = '';
+  if (googleEventsToShow.length > 0) {
+    googleLegendHtml = `
+      <div style="margin-top:10px; padding-top:8px; border-top:1px dashed #eee;">
+        <div style="font-size:12px; color:#666; font-weight:600; margin-bottom:6px;">📅 Events Google sans chantier (clique pour convertir)</div>
+        ${googleEventsToShow.map(ev => {
+          const safeId = String(ev.id).replace(/'/g, "\\'");
+          const title = escapeHtml(ev.summary || '(Sans titre)');
+          const startISO = (ev.start && ev.start.date) || (ev.start && ev.start.dateTime) || '';
+          const dStart = startISO ? new Date(startISO).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' }) : '?';
+          const loc = ev.location ? ' · 📍 ' + escapeHtml(ev.location) : '';
+          return `<div style="display:flex; align-items:center; gap:6px; padding:4px 0; font-size:13px;">
+            <span style="width:12px; height:12px; background:repeating-linear-gradient(45deg, #b0b0b0, #b0b0b0 3px, #c8c8c8 3px, #c8c8c8 6px); border-radius:3px; flex-shrink:0; border:1px solid #888;"></span>
+            <span style="flex:1;"><strong>${dStart}</strong> · ${title}${loc}</span>
+            <button class="btn-add btn-small" onclick="convertGoogleEventToChantier('${safeId}')">→ Convertir en chantier</button>
+          </div>`;
+        }).join('')}
+      </div>
+    `;
+  }
+
+  // ---- Statut Google (header) ----
+  let googleBadge = '';
+  if (!googleConnected) {
+    googleBadge = `<span style="font-size:11px; color:#888; padding:2px 6px; background:#f0f0f0; border-radius:10px;">🔌 Google déconnecté</span>`;
+  } else if (googleStatus === 'err') {
+    googleBadge = `<span style="font-size:11px; color:#e67e22; padding:2px 6px; background:#fef5e7; border-radius:10px;">⚠️ Google : erreur</span>`;
+  } else if (googleStatus === 'ok') {
+    googleBadge = `<span style="font-size:11px; color:#27ae60; padding:2px 6px; background:#eafaf1; border-radius:10px;">✓ Google synchro</span>`;
+  }
 
   el.innerHTML = `
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:6px;">
-      <h3 style="margin:0;">📅 Planning de la semaine</h3>
+      <h3 style="margin:0;">📅 Planning de la semaine ${googleBadge}</h3>
       <div style="display:flex; gap:6px; align-items:center;">
         <button class="btn-secondary btn-small" onclick="planningWeekShift(-1)" title="Semaine précédente">←</button>
         <button class="btn-secondary btn-small" onclick="planningWeekToday()" style="${isCurrentWeek ? 'opacity:0.5;' : ''}">Aujourd'hui</button>
         <button class="btn-secondary btn-small" onclick="planningWeekShift(1)" title="Semaine suivante">→</button>
+        <button class="btn-secondary btn-small" onclick="planningRefresh()" title="Rafraîchir Google Agenda">🔄</button>
       </div>
     </div>
     <div style="font-size:12px; color:#888; margin-bottom:10px;">
@@ -8007,15 +8219,38 @@ function renderPlanningHebdo() {
         <div></div>
         ${headerCells}
         ${rowsHtml}
+        ${googleRowHtml}
       </div>
     </div>
     <div style="margin-top:14px; padding-top:10px; border-top:1px dashed #ddd;">
       <div style="font-size:12px; color:#666; font-weight:600; margin-bottom:6px;">Légende des chantiers</div>
       ${legendHtml}
+      ${googleLegendHtml}
       <div style="font-size:11px; color:#888; margin-top:8px;">
-        █ Confirmé (en cours) &nbsp;·&nbsp; ▓ Planifié (rayé) &nbsp;·&nbsp; cliquer une cellule pour ouvrir le chantier
+        █ Confirmé (en cours) &nbsp;·&nbsp; ▓ Planifié (rayé) &nbsp;·&nbsp; ▓ gris = event Google sans chantier &nbsp;·&nbsp; cliquer pour ouvrir/convertir
       </div>
     </div>
+  `;
+}
+
+// Skeleton léger pendant le fetch des events Google (évite l'écran vide)
+function renderPlanningSkeleton(el, monday, sunday, chantiers, days, dayLabels, todayStr, isCurrentWeek, mondayStr, sundayStr, googleConnected, status) {
+  if (!el) return;
+  const loadingBadge = `<span style="font-size:11px; color:#888; padding:2px 6px; background:#f0f0f0; border-radius:10px;">⏳ Chargement Google…</span>`;
+  el.innerHTML = `
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:6px;">
+      <h3 style="margin:0;">📅 Planning de la semaine ${loadingBadge}</h3>
+      <div style="display:flex; gap:6px; align-items:center;">
+        <button class="btn-secondary btn-small" onclick="planningWeekShift(-1)" title="Semaine précédente">←</button>
+        <button class="btn-secondary btn-small" onclick="planningWeekToday()" style="${isCurrentWeek ? 'opacity:0.5;' : ''}">Aujourd'hui</button>
+        <button class="btn-secondary btn-small" onclick="planningWeekShift(1)" title="Semaine suivante">→</button>
+        <button class="btn-secondary btn-small" onclick="planningRefresh()" title="Rafraîchir Google Agenda">🔄</button>
+      </div>
+    </div>
+    <div style="font-size:12px; color:#888; margin-bottom:10px;">
+      ${mondayStr} → ${sundayStr}${isCurrentWeek ? ' · cette semaine' : ''}
+    </div>
+    <div style="color:#888; font-size:13px; padding:18px 0; text-align:center;">🔄 Chargement du planning…</div>
   `;
 }
 
