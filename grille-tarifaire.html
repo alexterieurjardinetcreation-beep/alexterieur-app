@@ -579,6 +579,18 @@
   .cl-item-head { font-weight: 600; }
   .cl-item-meta { font-size: 12px; color: #666; margin-top: 2px; }
 
+  /* Dashboard KPIs */
+  .dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+  }
+  .dashboard-kpi { transition: transform .15s, box-shadow .15s; }
+  .dashboard-kpi:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  }
+
   /* Mobile */
   @media (max-width: 768px) {
     .header-top { padding: 8px 12px; min-height: 52px; }
@@ -609,6 +621,7 @@
       margin-bottom: 8px;
     }
     .chantier-stats { font-size: 12px; gap: 10px; }
+    .dashboard-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
     .chat-messages { max-height: 350px; }
     .msg { max-width: 92%; font-size: 14px; }
     .settings-row { gap: 8px; }
@@ -967,12 +980,20 @@
         Articles au dépôt, alimentés automatiquement par le surplus des chantiers (qté achetée − qté utilisée).
       </p>
       <!-- Import facture direct depuis Stock -->
-      <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px;">
-        <button class="btn-add" onclick="document.getElementById('stock-invoice-input').click()" style="flex:1; background:#2980b9; color:#fff; border:none; padding:10px 14px; border-radius:6px; font-size:14px; font-weight:700; cursor:pointer;">
+      <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
+        <button class="btn-add" onclick="document.getElementById('stock-invoice-input').click()" style="flex:1; min-width:200px; background:#2980b9; color:#fff; border:none; padding:10px 14px; border-radius:6px; font-size:14px; font-weight:700; cursor:pointer;">
           Importer une facture → Stock
         </button>
         <input type="file" id="stock-invoice-input" accept=".pdf,image/*" multiple capture="environment"
                style="display:none;" onchange="handleStockInvoiceFiles(this)">
+      </div>
+      <!-- Bon de livraison papier (photo caméra) -->
+      <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px; flex-wrap:wrap;">
+        <button class="btn-add" onclick="document.getElementById('stock-bl-input').click()" style="flex:1; min-width:200px; background:#5ba241; color:#fff; border:none; padding:10px 14px; border-radius:6px; font-size:14px; font-weight:700; cursor:pointer;">
+          📸 Bon de livraison papier
+        </button>
+        <input type="file" id="stock-bl-input" accept="image/*" capture="environment"
+               style="display:none;" onchange="handleDeliveryNoteFile(this)">
         <div id="stock-import-status" style="font-size:12px; color:#666; min-width:120px;"></div>
       </div>
       <input type="text" placeholder="Rechercher..." oninput="filterStock(this.value)"
@@ -1289,6 +1310,11 @@
       <div id="today-agenda-content"></div>
     </div>
 
+    <!-- Tableau de bord (KPIs) -->
+    <div class="card" id="dashboard-card">
+      <div id="dashboard-content"></div>
+    </div>
+
     <!-- Récap semaine -->
     <div class="card" id="recap-semaine-card">
       <div id="recap-semaine-content"></div>
@@ -1327,6 +1353,11 @@
 
     <div class="card" id="chantier-detail" style="display:none;">
       <div id="chantier-detail-content"></div>
+    </div>
+
+    <!-- Planning hebdo visuel -->
+    <div class="card" id="planning-hebdo-card">
+      <div id="planning-hebdo-content"></div>
     </div>
   </div>
 
@@ -1815,6 +1846,7 @@ function loadData() {
       if (!parsed.priceMode) parsed.priceMode = 'HT';
       if (!parsed.targetHourlyRate) parsed.targetHourlyRate = 45;
       if (!parsed.targetMaterialMargin) parsed.targetMaterialMargin = 25;
+      if (!parsed.targetMarginPercent) parsed.targetMarginPercent = 35;
       if (!parsed.clients) parsed.clients = [];
       if (!parsed.devis) parsed.devis = [];
       if (!parsed.kits) parsed.kits = [];
@@ -1874,6 +1906,10 @@ function loadData() {
             if (ph && ph.publishedAt === undefined) ph.publishedAt = null;
           });
         }
+        // Migration silencieuse v31 : statut paiement (default true = payé pour rétrocompat)
+        if (ch.paid === undefined) ch.paid = true;
+        // Migration silencieuse v31 : date fin (optionnelle, utilisée par planning hebdo)
+        if (ch.dateFin === undefined) ch.dateFin = null;
       });
       // Migration silencieuse v23 : data.marketing
       if (!parsed.marketing) {
@@ -2497,7 +2533,9 @@ function renderChantiers() {
   });
 
   renderTodayAgenda();
+  renderDashboard();
   renderRecapSemaine();
+  renderPlanningHebdo();
 
   if (data.chantiers.length === 0) {
     list.innerHTML = '<div class="empty-state">Aucun chantier enregistré.</div>';
@@ -5760,14 +5798,17 @@ function renderAchatsHistory() {
     const total = a.lines.reduce((s, l) => s + (l.qty || 0) * (l.unitPrice || 0), 0);
     const linkedCount = a.lines.filter(l => l.linkedDevisId).length;
     const stockCount = a.lines.filter(l => (l.stockQty || 0) > 0).length;
+    const isBL = a.type === 'bon_livraison';
+    const blBadge = isBL ? ' <span style="background:#5ba241;color:#fff;padding:1px 7px;border-radius:10px;font-size:10px;vertical-align:middle;">📸 BL</span>' : '';
     return `
       <div class="chantier-item">
         <div class="chantier-head">
           <div>
-            <div class="chantier-title">${escapeHtml(a.supplier || '?')} ${a.ref ? '— ' + escapeHtml(a.ref) : ''}</div>
+            <div class="chantier-title">${escapeHtml(a.supplier || '?')} ${a.ref ? '— ' + escapeHtml(a.ref) : ''}${blBadge}</div>
             <div class="chantier-meta">${a.date} — ${a.lines.length} ligne(s) — <strong>${total.toFixed(2)} € HT</strong>
               ${linkedCount > 0 ? ' · <span style="color:#2ecc71;">' + linkedCount + ' liée(s) à devis</span>' : ''}
               ${stockCount > 0 ? ' · <span style="color:#e67e22;">' + stockCount + ' au stock</span>' : ''}
+              ${isBL ? ' · <span style="color:#5ba241;">bon de livraison papier</span>' : ''}
             </div>
           </div>
           <div style="display:flex; gap:6px;">
@@ -6502,6 +6543,22 @@ function renderChantierDetail(ch) {
           <option value="cloture" ${(ch.statut||'') === 'cloture' ? 'selected' : ''}>Cloture</option>
         </select>
       </div>
+      ${(ch.statut === 'cloture' && isPatron()) ? `
+      <div class="field" style="max-width:170px;">
+        <label style="font-size:12px; color:#666;">Paiement</label>
+        <select onchange="updateChantierPaid('${ch.id}', this.value === 'true')"
+                style="padding:6px 10px; border:1px solid #d4d4d4; border-radius:4px;">
+          <option value="true" ${ch.paid !== false ? 'selected' : ''}>🟢 Payé</option>
+          <option value="false" ${ch.paid === false ? 'selected' : ''}>🔴 Impayé</option>
+        </select>
+      </div>` : ''}
+      ${(ch.statut === 'planifie' || ch.statut === 'en_cours') ? `
+      <div class="field" style="max-width:160px;">
+        <label style="font-size:12px; color:#666;">Date fin (optionnel)</label>
+        <input type="date" value="${ch.dateFin || ''}"
+               onchange="updateChantierField('${ch.id}', 'dateFin', this.value || null)"
+               style="padding:6px 10px; border:1px solid #d4d4d4; border-radius:4px;">
+      </div>` : ''}
     </div>
 
     ${materielPrevu.length > 0 ? `
@@ -7462,6 +7519,391 @@ function renderRecapSemaine() {
   `;
 }
 
+/* ============ DASHBOARD KPIs ============ */
+
+function getMonthBounds(refDate) {
+  const ref = refDate ? new Date(refDate) : new Date();
+  const start = new Date(ref.getFullYear(), ref.getMonth(), 1, 0, 0, 0, 0);
+  const end = new Date(ref.getFullYear(), ref.getMonth() + 1, 0, 23, 59, 59, 999);
+  return { start, end };
+}
+
+function getPrevMonthBounds() {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0);
+  const end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+  return { start, end };
+}
+
+function chantierRevenueFor(ch) {
+  try {
+    const s = computeChantierStats(ch);
+    return s.revenue || 0;
+  } catch(e) {
+    return ch.montantHT || 0;
+  }
+}
+
+function chantierMargePercent(ch) {
+  try {
+    const s = computeChantierStats(ch);
+    if (!s.revenue || s.revenue <= 0) return null;
+    return (s.grossProfit / s.revenue) * 100;
+  } catch(e) { return null; }
+}
+
+function isChantierInRange(ch, start, end) {
+  if (!ch || !ch.date) return false;
+  const d = new Date(ch.date + 'T00:00:00');
+  return d >= start && d <= end;
+}
+
+function renderDashboard() {
+  const el = document.getElementById('dashboard-content');
+  if (!el) return;
+  // Mode ouvrier : pas de chiffres financiers → cacher la card
+  if (typeof isPatron === 'function' && !isPatron()) {
+    const card = document.getElementById('dashboard-card');
+    if (card) card.style.display = 'none';
+    return;
+  } else {
+    const card = document.getElementById('dashboard-card');
+    if (card) card.style.display = '';
+  }
+
+  const chantiers = data.chantiers || [];
+  const { start: monthStart, end: monthEnd } = getMonthBounds();
+  const { start: prevStart, end: prevEnd } = getPrevMonthBounds();
+
+  // KPI 1 : CA du mois
+  const chantiersMois = chantiers.filter(ch => isChantierInRange(ch, monthStart, monthEnd));
+  const caMois = chantiersMois.reduce((s, ch) => s + chantierRevenueFor(ch), 0);
+  const chantiersPrev = chantiers.filter(ch => isChantierInRange(ch, prevStart, prevEnd));
+  const caPrev = chantiersPrev.reduce((s, ch) => s + chantierRevenueFor(ch), 0);
+  let evolHtml = '';
+  if (caPrev > 0) {
+    const pct = ((caMois - caPrev) / caPrev) * 100;
+    const sign = pct >= 0 ? '+' : '';
+    const color = pct >= 0 ? '#27ae60' : '#e74c3c';
+    evolHtml = `<div style="font-size:11px; color:${color}; font-weight:600;">${sign}${pct.toFixed(0)}% vs mois préc.</div>`;
+  } else if (caMois > 0) {
+    evolHtml = `<div style="font-size:11px; color:#888;">Aucune réf. mois préc.</div>`;
+  } else {
+    evolHtml = `<div style="font-size:11px; color:#888;">Pas encore de CA ce mois</div>`;
+  }
+
+  // KPI 2 : Marge moyenne sur chantiers clos du mois
+  const cible = data.targetMarginPercent || 35;
+  const chantiersClosMois = chantiersMois.filter(ch => (ch.statut || 'en_cours') === 'cloture');
+  const marges = chantiersClosMois.map(chantierMargePercent).filter(v => v !== null && !isNaN(v));
+  const margeMoy = marges.length > 0 ? (marges.reduce((s, v) => s + v, 0) / marges.length) : null;
+  let margeColor = '#888';
+  let margeIcon = '⚪';
+  let margeText = '—';
+  let margeSubText = `Cible ${cible}% · 0 chantier clos`;
+  if (margeMoy !== null) {
+    margeText = `${margeMoy.toFixed(0)}%`;
+    if (margeMoy >= cible) { margeColor = '#27ae60'; margeIcon = '🟢'; margeSubText = `Cible ${cible}% ✅`; }
+    else if (margeMoy >= 20) { margeColor = '#e67e22'; margeIcon = '🟧'; margeSubText = `Sous la cible ${cible}%`; }
+    else { margeColor = '#e74c3c'; margeIcon = '🔴'; margeSubText = `< 20% — alerte`; }
+  }
+
+  // KPI 3 : Prochain chantier (planifié ou en_cours, date >= aujourd'hui)
+  const today = new Date(); today.setHours(0,0,0,0);
+  const future = chantiers
+    .filter(ch => {
+      if (!ch.date) return false;
+      const stat = ch.statut || 'en_cours';
+      if (stat !== 'planifie' && stat !== 'en_cours') return false;
+      const d = new Date(ch.date + 'T00:00:00');
+      return d >= today;
+    })
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
+  const prochain = future[0] || null;
+  let prochainTitle = 'Aucun chantier planifié';
+  let prochainSub = 'Profite-en pour prospecter !';
+  let prochainClick = '';
+  if (prochain) {
+    const nomCl = (prochain.client || (data.clients.find(c => c.id === prochain.clientId)?.name) || '?');
+    prochainTitle = nomCl.length > 22 ? nomCl.slice(0, 21) + '…' : nomCl;
+    const d = new Date(prochain.date + 'T00:00:00');
+    const diffDays = Math.round((d - today) / (1000*60*60*24));
+    if (diffDays === 0) prochainSub = "aujourd'hui";
+    else if (diffDays === 1) prochainSub = "demain";
+    else prochainSub = `dans ${diffDays} jours`;
+    prochainClick = `onclick="dashboardOpenChantier('${prochain.id}')"`;
+  }
+
+  // KPI 4 : Impayés (chantiers cloturés avec paid === false)
+  const impayes = chantiers.filter(ch => (ch.statut || 'en_cours') === 'cloture' && ch.paid === false);
+  const impayesCount = impayes.length;
+  const impayesAmount = impayes.reduce((s, ch) => s + chantierRevenueFor(ch), 0);
+  const impayesIcon = impayesCount > 0 ? '🔴' : '🟢';
+  const impayesColor = impayesCount > 0 ? '#e74c3c' : '#27ae60';
+  const impayesText = impayesCount > 0 ? `${impayesCount} facture${impayesCount > 1 ? 's' : ''}` : 'Aucun';
+  const impayesSub = impayesCount > 0 ? `${impayesAmount.toFixed(0)} € à relancer` : 'Tout est encaissé';
+
+  el.innerHTML = `
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:6px;">
+      <h3 style="margin:0;">📊 Tableau de bord</h3>
+      <span style="font-size:12px; color:#888;">${monthStart.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}</span>
+    </div>
+    <div class="dashboard-grid">
+      <div class="dashboard-kpi" onclick="dashboardOpenMonth()" style="cursor:pointer; padding:12px; background:#fafcf7; border:1px solid #e0ebd5; border-radius:8px;">
+        <div style="font-size:11px; color:#666; text-transform:uppercase; margin-bottom:4px;">💰 CA ce mois</div>
+        <div style="font-size:22px; font-weight:700; color:#3d6f28; line-height:1.1;">${caMois.toFixed(0)} €</div>
+        ${evolHtml}
+      </div>
+      <div class="dashboard-kpi" onclick="dashboardOpenCompta()" style="cursor:pointer; padding:12px; background:#fafcf7; border:1px solid #e0ebd5; border-radius:8px;">
+        <div style="font-size:11px; color:#666; text-transform:uppercase; margin-bottom:4px;">📈 Marge moyenne</div>
+        <div style="font-size:22px; font-weight:700; color:${margeColor}; line-height:1.1;">${margeIcon} ${margeText}</div>
+        <div style="font-size:11px; color:#888;">${margeSubText}</div>
+      </div>
+      <div class="dashboard-kpi" ${prochainClick} style="${prochain ? 'cursor:pointer;' : ''} padding:12px; background:#fafcf7; border:1px solid #e0ebd5; border-radius:8px;">
+        <div style="font-size:11px; color:#666; text-transform:uppercase; margin-bottom:4px;">📅 Prochain chantier</div>
+        <div style="font-size:16px; font-weight:700; color:#2980b9; line-height:1.2;">${escapeHtml(prochainTitle)}</div>
+        <div style="font-size:12px; color:#888;">${prochainSub}</div>
+      </div>
+      <div class="dashboard-kpi" onclick="dashboardOpenImpayes()" style="cursor:pointer; padding:12px; background:#fafcf7; border:1px solid #e0ebd5; border-radius:8px;">
+        <div style="font-size:11px; color:#666; text-transform:uppercase; margin-bottom:4px;">⚠️ Impayés</div>
+        <div style="font-size:22px; font-weight:700; color:${impayesColor}; line-height:1.1;">${impayesIcon} ${impayesText}</div>
+        <div style="font-size:11px; color:#888;">${impayesSub}</div>
+      </div>
+    </div>
+  `;
+}
+
+function dashboardOpenChantier(chId) {
+  if (typeof viewChantier === 'function') viewChantier(chId);
+}
+function dashboardOpenMonth() {
+  if (typeof setChantierFilter === 'function') setChantierFilter('');
+  const el = document.getElementById('chantiers-list');
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (typeof toast === 'function') {
+    const { start } = getMonthBounds();
+    toast('Liste : chantiers de ' + start.toLocaleDateString('fr-FR', { month:'long' }));
+  }
+}
+function dashboardOpenCompta() {
+  if (typeof showPage === 'function') {
+    showPage('business');
+    if (typeof showSubPage === 'function') showSubPage('business', 'compta');
+  }
+}
+function dashboardOpenImpayes() {
+  if (typeof setChantierFilter === 'function') setChantierFilter('cloture');
+  const el = document.getElementById('chantiers-list');
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (typeof toast === 'function') toast('Filtré : chantiers clôturés (relance les impayés)');
+}
+
+/* ============ PLANNING HEBDO ============ */
+
+let _planningWeekOffset = 0; // 0 = cette semaine, -1 = précédente, +1 = suivante
+
+function getPlanningWeekBounds(offset) {
+  const now = new Date();
+  const day = now.getDay(); // 0=dim, 1=lun...
+  const diffToMonday = (day === 0 ? -6 : 1 - day);
+  const monday = new Date(now);
+  monday.setDate(now.getDate() + diffToMonday + (offset || 0) * 7);
+  monday.setHours(0, 0, 0, 0);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  sunday.setHours(23, 59, 59, 999);
+  return { monday, sunday };
+}
+
+const PLANNING_COLORS = [
+  '#5ba241', '#2980b9', '#e67e22', '#9b59b6', '#16a085',
+  '#c0392b', '#f39c12', '#27ae60', '#2c3e50', '#d35400'
+];
+function planningColorForChantier(chId) {
+  let h = 0;
+  const s = String(chId || '');
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return PLANNING_COLORS[h % PLANNING_COLORS.length];
+}
+
+function planningChantierDates(ch) {
+  if (!ch.date) return [];
+  const start = new Date(ch.date + 'T00:00:00');
+  const end = ch.dateFin ? new Date(ch.dateFin + 'T00:00:00') : new Date(ch.date + 'T00:00:00');
+  if (isNaN(start.getTime())) return [];
+  if (isNaN(end.getTime())) return [start];
+  const dates = [];
+  const cur = new Date(start);
+  while (cur <= end && dates.length < 60) {
+    dates.push(new Date(cur));
+    cur.setDate(cur.getDate() + 1);
+  }
+  return dates;
+}
+
+function planningWorkersForChantier(ch) {
+  const set = new Map();
+  const alexName = (data.currentUser && data.currentUser.isPatron) ? (data.currentUser.name || 'Alex') : 'Alex';
+  set.set(alexName.toLowerCase(), alexName);
+  (ch.soustraitants || []).forEach(st => {
+    const nm = (st.name || '').trim();
+    if (nm) set.set(nm.toLowerCase(), nm);
+  });
+  (ch.userSessions || []).forEach(s => {
+    const nm = (s.userName || '').trim();
+    if (nm) set.set(nm.toLowerCase(), nm);
+  });
+  return Array.from(set.values());
+}
+
+function planningAllRows() {
+  const rows = [];
+  const alexName = (data.currentUser && data.currentUser.isPatron) ? (data.currentUser.name || 'Alex') : 'Alex';
+  rows.push({ key: alexName.toLowerCase(), name: alexName + ' (toi)' });
+  (data.knownWorkers || []).forEach(w => {
+    const k = (w.name || '').toLowerCase();
+    if (k && !rows.find(r => r.key === k)) {
+      rows.push({ key: k, name: w.name });
+    }
+  });
+  (data.soustraitants || []).forEach(st => {
+    const k = (st.name || '').toLowerCase();
+    if (k && !rows.find(r => r.key === k)) {
+      rows.push({ key: k, name: st.name });
+    }
+  });
+  return rows;
+}
+
+function planningWeekShift(delta) {
+  _planningWeekOffset += delta;
+  renderPlanningHebdo();
+}
+
+function planningWeekToday() {
+  _planningWeekOffset = 0;
+  renderPlanningHebdo();
+}
+
+function renderPlanningHebdo() {
+  const el = document.getElementById('planning-hebdo-content');
+  if (!el) return;
+
+  const { monday, sunday } = getPlanningWeekBounds(_planningWeekOffset);
+  const days = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    days.push(d);
+  }
+  const dayLabels = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+
+  const chantiers = (data.chantiers || []).filter(ch => {
+    const dates = planningChantierDates(ch);
+    return dates.some(d => d >= monday && d <= sunday);
+  });
+
+  const rows = planningAllRows();
+  const rowsActives = rows.filter(r => {
+    return chantiers.some(ch => {
+      const workers = planningWorkersForChantier(ch);
+      return workers.some(w => w.toLowerCase() === r.key);
+    });
+  });
+  const finalRows = rowsActives.length > 0 ? rowsActives : [rows[0]];
+
+  const todayStr = (new Date()).toISOString().slice(0,10);
+  const isCurrentWeek = (_planningWeekOffset === 0);
+
+  const headerCells = days.map((d, i) => {
+    const dStr = d.toISOString().slice(0,10);
+    const isToday = (dStr === todayStr);
+    const dayNum = d.getDate();
+    const styleHL = isToday ? 'background:#fff8e1; border-radius:4px;' : '';
+    return `<div style="text-align:center; font-weight:600; font-size:12px; color:#444; padding:4px; ${styleHL}">
+      ${dayLabels[i]} ${String(dayNum).padStart(2, '0')}
+    </div>`;
+  }).join('');
+
+  const rowsHtml = finalRows.map(row => {
+    const cells = days.map(d => {
+      const dStr = d.toISOString().slice(0,10);
+      const isToday = (dStr === todayStr);
+      const chsForCell = chantiers.filter(ch => {
+        const workers = planningWorkersForChantier(ch);
+        if (!workers.some(w => w.toLowerCase() === row.key)) return false;
+        const dates = planningChantierDates(ch);
+        return dates.some(dd => dd.toISOString().slice(0,10) === dStr);
+      });
+      if (chsForCell.length === 0) {
+        return `<div style="min-height:34px; border:1px dashed #e0e0e0; border-radius:4px; ${isToday ? 'background:#fffbea;' : ''}"></div>`;
+      }
+      const blocks = chsForCell.map(ch => {
+        const color = planningColorForChantier(ch.id);
+        const stat = ch.statut || 'en_cours';
+        const isPlanned = (stat === 'planifie');
+        const bg = isPlanned ? `repeating-linear-gradient(45deg, ${color}, ${color} 4px, ${color}cc 4px, ${color}cc 8px)` : color;
+        const nomCl = (ch.client || (data.clients.find(c => c.id === ch.clientId)?.name) || '?');
+        const safeName = escapeHtml(nomCl).slice(0, 14);
+        return `<div onclick="dashboardOpenChantier('${ch.id}')" title="${escapeHtml(nomCl)} (${stat})" style="cursor:pointer; background:${bg}; color:#fff; padding:3px 5px; border-radius:3px; font-size:11px; font-weight:600; line-height:1.1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-bottom:2px;">${safeName}</div>`;
+      }).join('');
+      return `<div style="min-height:34px; padding:1px; ${isToday ? 'background:#fffbea; border-radius:4px;' : ''}">${blocks}</div>`;
+    }).join('');
+    return `
+      <div style="font-weight:600; font-size:13px; color:#333; padding:8px 4px; border-right:1px solid #eee;">${escapeHtml(row.name)}</div>
+      ${cells}
+    `;
+  }).join('');
+
+  const legendHtml = chantiers.length > 0 ? chantiers.map(ch => {
+    const color = planningColorForChantier(ch.id);
+    const dates = planningChantierDates(ch).filter(d => d >= monday && d <= sunday);
+    if (dates.length === 0) return '';
+    const first = dates[0], last = dates[dates.length - 1];
+    const range = first.getTime() === last.getTime()
+      ? dayLabels[(first.getDay() + 6) % 7]
+      : dayLabels[(first.getDay() + 6) % 7] + '-' + dayLabels[(last.getDay() + 6) % 7];
+    const nomCl = (ch.client || (data.clients.find(c => c.id === ch.clientId)?.name) || '?');
+    const adresse = ch.adresse ? ' (' + escapeHtml(ch.adresse) + ')' : '';
+    const typeBadge = (ch.type || 'perso') === 'babad' ? ' <span style="background:#2980b9; color:#fff; padding:1px 5px; border-radius:3px; font-size:10px;">BABAD</span>' : '';
+    return `<div onclick="dashboardOpenChantier('${ch.id}')" style="cursor:pointer; display:flex; align-items:center; gap:6px; padding:4px 0; font-size:13px;">
+      <span style="width:12px; height:12px; background:${color}; border-radius:3px; flex-shrink:0;"></span>
+      <span><strong>${escapeHtml(range)}</strong> · ${escapeHtml(nomCl)}${typeBadge}${adresse}</span>
+    </div>`;
+  }).join('') : '<div style="color:#888; font-size:13px; font-style:italic;">Aucun chantier programmé cette semaine.</div>';
+
+  const mondayStr = monday.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  const sundayStr = sunday.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+
+  el.innerHTML = `
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:6px;">
+      <h3 style="margin:0;">📅 Planning de la semaine</h3>
+      <div style="display:flex; gap:6px; align-items:center;">
+        <button class="btn-secondary btn-small" onclick="planningWeekShift(-1)" title="Semaine précédente">←</button>
+        <button class="btn-secondary btn-small" onclick="planningWeekToday()" style="${isCurrentWeek ? 'opacity:0.5;' : ''}">Aujourd'hui</button>
+        <button class="btn-secondary btn-small" onclick="planningWeekShift(1)" title="Semaine suivante">→</button>
+      </div>
+    </div>
+    <div style="font-size:12px; color:#888; margin-bottom:10px;">
+      ${mondayStr} → ${sundayStr}${isCurrentWeek ? ' · cette semaine' : ''}
+    </div>
+    <div style="overflow-x:auto;">
+      <div style="display:grid; grid-template-columns:130px repeat(7, minmax(80px, 1fr)); gap:4px; min-width:680px;">
+        <div></div>
+        ${headerCells}
+        ${rowsHtml}
+      </div>
+    </div>
+    <div style="margin-top:14px; padding-top:10px; border-top:1px dashed #ddd;">
+      <div style="font-size:12px; color:#666; font-weight:600; margin-bottom:6px;">Légende des chantiers</div>
+      ${legendHtml}
+      <div style="font-size:11px; color:#888; margin-top:8px;">
+        █ Confirmé (en cours) &nbsp;·&nbsp; ▓ Planifié (rayé) &nbsp;·&nbsp; cliquer une cellule pour ouvrir le chantier
+      </div>
+    </div>
+  `;
+}
+
 /* ============ AGENDA GOOGLE DU JOUR ============ */
 
 let _todayAgendaCache = { events: null, fetchedAt: 0 };
@@ -8198,6 +8640,13 @@ function openStockImportModal(items, supplier, date, ref) {
   const totalHT = items.reduce((s, it) => s + (it.total || (it.qty || 0) * (it.unitPrice || 0)), 0);
   const summaryEl = document.getElementById('stock-import-summary');
   const rowsEl = document.getElementById('stock-import-rows');
+  // Réinitialiser le titre (au cas où on viendrait d'un BL)
+  const modal = document.getElementById('stock-import-modal');
+  const titleEl = modal.querySelector('h3');
+  if (titleEl) {
+    titleEl.textContent = 'Importer vers le Stock';
+    titleEl.style.color = '#2980b9';
+  }
   summaryEl.innerHTML = `
     <strong>${items.length}</strong> ligne(s) détectée(s)
     ${supplier ? ' — <strong>' + escapeHtml(supplier) + '</strong>' : ''}
@@ -8265,7 +8714,7 @@ function closeStockImportModal() {
 
 function confirmStockImport() {
   if (!_stockImportPending) return;
-  const { items, supplier, date, ref } = _stockImportPending;
+  const { items, supplier, date, ref, isDeliveryNote } = _stockImportPending;
   if (!data.stock) data.stock = [];
   if (!data.achats) data.achats = [];
 
@@ -8307,12 +8756,17 @@ function confirmStockImport() {
   const achat = {
     id: achatId,
     date: achatDate,
-    supplier: supplier || 'Import direct Stock',
-    ref: ref || ('STK-' + achatId.slice(-6)),
+    supplier: supplier || (isDeliveryNote ? 'Bon de livraison papier' : 'Import direct Stock'),
+    ref: ref || ((isDeliveryNote ? 'BL-' : 'STK-') + achatId.slice(-6)),
     totalHT: achatLines.reduce((s, l) => s + (l.qty || 0) * (l.unitPrice || 0), 0),
     lines: achatLines,
     chantierId: selectedChantierId || null   // NOUVEAU : lien chantier (nullable)
   };
+  if (isDeliveryNote) {
+    achat.type = 'bon_livraison';
+    const dStr = new Date().toLocaleDateString('fr-FR');
+    achat.note = 'Bon de livraison papier scanné le ' + dStr;
+  }
   data.achats.push(achat);
 
   // Créer/incrémenter les entrées stock
@@ -8330,7 +8784,7 @@ function confirmStockImport() {
       mergedCount++;
     } else {
       const stockId = 'stk_' + achatId + '_' + lineIdx;
-      data.stock.push({
+      const stockEntry = {
         id: stockId,
         achatId: achatId,
         lineIdx: lineIdx,
@@ -8340,8 +8794,11 @@ function confirmStockImport() {
         qty: l.qty,
         unit: l.unit,
         unitPrice: l.unitPrice,
-        chantierId: null
-      });
+        chantierId: null,
+        dateAjout: new Date().toISOString()
+      };
+      if (isDeliveryNote) stockEntry.sourceType = 'bon_livraison';
+      data.stock.push(stockEntry);
       addedCount++;
     }
   });
@@ -8353,7 +8810,211 @@ function confirmStockImport() {
   if (addedCount > 0) msg.push(addedCount + ' article(s) ajouté(s)');
   if (mergedCount > 0) msg.push(mergedCount + ' article(s) incrémenté(s)');
   const chantierMsg = selectedChantier ? (' — lié au chantier ' + (selectedChantier.client || '?')) : '';
-  toast('Stock mis à jour — ' + msg.join(', ') + chantierMsg);
+  const prefix = isDeliveryNote ? 'Bon de livraison enregistré — ' : 'Stock mis à jour — ';
+  toast(prefix + msg.join(', ') + chantierMsg);
+}
+
+/* ============ BON DE LIVRAISON PAPIER (OCR) ============ */
+// Sœur de parseInvoiceText, dédiée aux bons de livraison qui n'ont souvent
+// pas de prix : on cherche les couples (qté + désignation), prix par défaut 0.
+function parseDeliveryNoteText(text) {
+  const result = { supplier: '', date: '', ref: '', items: [], rawText: text };
+  const tl = (text || '').toLowerCase();
+
+  // Détection fournisseur (même logique que parseInvoiceText)
+  if (tl.includes('plattard')) result.supplier = 'Plattard Négoce';
+  else if (tl.includes('bigmat')) result.supplier = 'BigMat Girardon';
+  else if (tl.includes('bourg matériaux') || tl.includes('bourg materiaux') || tl.includes('samse')) result.supplier = 'Bourg Matériaux / Samse';
+  else if (tl.includes('macon granulats') || tl.includes('mâcon granulats')) result.supplier = 'Macon Granulats';
+  else if (tl.includes('locamuc')) result.supplier = 'Locamuc Ferrière Macon';
+
+  // Date
+  const dateNumMatch = text.match(/(?:Date[\s\S]{0,30}?|Le\s+)(\d{2})\/(\d{2})\/(\d{4})/i) || text.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+  if (dateNumMatch) result.date = `${dateNumMatch[3]}-${dateNumMatch[2]}-${dateNumMatch[1]}`;
+
+  // N° BL / bon
+  const numMatch = text.match(/(?:Bon\s*de\s*livraison|B\.?L\.?|Livraison)\s*N?°?\s*:?\s*([A-Z0-9\-\/_]{4,20})/i) ||
+                   text.match(/N[ouu]m[ée]ro[\s:]+([A-Z][A-Z0-9\-\/_]{2,30})/i) ||
+                   text.match(/\b(\d{6,15})\b/);
+  if (numMatch) result.ref = numMatch[1].trim();
+
+  const parseNum = s => parseFloat(String(s).replace(/\s/g, '').replace(',', '.'));
+  const isBadLine = l => /^(ECO-?CONTRIBUTION|BAREME|TVA|TOTAL|POIDS\s+TOT|NET\s*A\s*PAYER|TAXES|BASE|MONTANT|REGLEMENT|COMMANDE\s*N|Prix\s*garantis|DEVIS|FACTURE|Date\s+N|EXEMPLAIRE|Page\s|Intervenant|R[eé]f[eé]rence\s*$|Repr[eé]sentant|Bon\s*de\s*livraison|Adresse|T[ée]l[ée]phone|SIRET|TVA\s*intra|Client|Chantier|Code\s*postal)/i.test(l);
+
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+
+  // Patterns spécifiques bon de livraison (sans prix obligatoire)
+  const unitWord = '(?:SACS?|TONNES?|KG|M3|M³|M2|M²|ML|UN|UNIT[EÉ]S?|PCE?S?|PI[EÈ]CES?|PALETTES?|PLT|RLX?|ROULEAUX?|PC|U|T|MC)';
+
+  // BL-1 : {qty} {unit} {desc...}        ex : "5,00 SAC CIMENT 25KG"
+  const bl1 = new RegExp('^(\\d{1,5}(?:[.,]\\d{1,3})?)\\s+' + unitWord + '\\s+(.{3,120})$', 'i');
+  // BL-2 : {qty} {desc} {unit}           ex : "2,5 GRAVIER 0/4 M3"
+  const bl2 = new RegExp('^(\\d{1,5}(?:[.,]\\d{1,3})?)\\s+(.{3,120}?)\\s+' + unitWord + '\\s*$', 'i');
+  // BL-3 : {desc} {qty} {unit}           ex : "DALLE 60x60 GRISE 10 PCE"
+  const bl3 = new RegExp('^(.{3,120}?)\\s+(\\d{1,5}(?:[.,]\\d{1,3})?)\\s+' + unitWord + '\\s*$', 'i');
+  // BL-4 : {ref} {desc} {qty} {unit}     ex : "REF123 SABLE 0/4 5 T"
+  const bl4 = new RegExp('^([A-Z0-9][A-Z0-9\\-/]{2,15})\\s+(.{3,120}?)\\s+(\\d{1,5}(?:[.,]\\d{1,3})?)\\s+' + unitWord + '\\s*$', 'i');
+  // BL-5 : qty seule en début + désignation libre (sans unité claire) — incertain
+  const bl5 = /^(\d{1,4}(?:[.,]\d{1,3})?)\s+([A-Za-zÀ-ÿ].{3,120})$/;
+
+  const unitRe = new RegExp('^' + unitWord + '$', 'i');
+  const trailingUnitRe = new RegExp('\\b' + unitWord + '\\s*$', 'i');
+  const leadingUnitRe = new RegExp('\\b' + unitWord + '\\b', 'i');
+
+  let descBuffer = '';
+  let currentRef = '';
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (isBadLine(line)) { descBuffer = ''; continue; }
+    // Ligne ressemblant à une référence isolée
+    if (/^[A-Z0-9][\w\-/]{2,20}$/.test(line) && !/\d+[,.]\d{2}/.test(line) && line.length < 25 && !unitRe.test(line)) {
+      currentRef = line.trim();
+      descBuffer = '';
+      continue;
+    }
+
+    let m, matched = null, ambiguous = false;
+    if ((m = line.match(bl4))) {
+      const u = (line.match(trailingUnitRe) || ['U'])[0];
+      matched = { ref: m[1], desc: m[2].trim(), qty: parseNum(m[3]), unit: u };
+    } else if ((m = line.match(bl1))) {
+      const u = (line.match(leadingUnitRe) || ['U'])[0];
+      matched = { ref: '', desc: m[2].trim(), qty: parseNum(m[1]), unit: u };
+    } else if ((m = line.match(bl2))) {
+      const u = (line.match(trailingUnitRe) || ['U'])[0];
+      matched = { ref: '', desc: m[2].trim(), qty: parseNum(m[1]), unit: u };
+    } else if ((m = line.match(bl3))) {
+      const u = (line.match(trailingUnitRe) || ['U'])[0];
+      matched = { ref: '', desc: m[1].trim(), qty: parseNum(m[2]), unit: u };
+    } else if ((m = line.match(bl5))) {
+      matched = { ref: '', desc: m[2].trim(), qty: parseNum(m[1]), unit: 'U' };
+      ambiguous = true;
+    }
+
+    if (matched && matched.qty > 0 && matched.qty < 100000 && matched.desc.length >= 3) {
+      const desc = (descBuffer ? descBuffer + ' ' + matched.desc : matched.desc).slice(0, 120);
+      const refFinal = matched.ref || currentRef || '';
+      result.items.push({
+        ref: refFinal,
+        desc,
+        qty: matched.qty,
+        unit: normalizeUnit(matched.unit),
+        unitPrice: 0,
+        total: 0,
+        ambiguous
+      });
+      currentRef = '';
+      descBuffer = '';
+    } else if (line.length > 5 && line.length < 120 && !/^\d+[,.]?\d*$/.test(line)) {
+      descBuffer = descBuffer ? descBuffer + ' ' + line : line;
+      if (descBuffer.length > 200) descBuffer = '';
+    }
+  }
+
+  return result;
+}
+
+async function handleDeliveryNoteFile(input) {
+  const file = (input.files || [])[0];
+  input.value = '';
+  if (!file) return;
+  const isImage = /^image\//i.test(file.type) || /\.(jpe?g|png|webp)$/i.test(file.name);
+  if (!isImage) {
+    alert('Le bon de livraison doit être une photo (JPG/PNG). Pour un PDF, utilise le bouton "Importer une facture".');
+    return;
+  }
+  const statusEl = document.getElementById('stock-import-status');
+  if (statusEl) statusEl.textContent = 'Lecture en cours… (5-15s)';
+  try {
+    const text = await extractImageText(file);
+    if (statusEl) statusEl.textContent = '';
+    if (!text || !text.trim()) {
+      alert('Impossible de lire la photo. Astuce : photo bien éclairée, droite et nette.');
+      return;
+    }
+    const parsed = parseDeliveryNoteText(text);
+    if (parsed.items.length === 0) {
+      alert("Aucune ligne détectée sur ce bon de livraison.\n\nAstuces :\n- Cadre bien le BL, sans ombre\n- Tiens le téléphone droit\n- Évite les reflets\n\nTu peux aussi ajouter les lignes manuellement via \"+ Entrée manuelle\".");
+      return;
+    }
+    openDeliveryNoteModal(parsed.items, parsed.supplier, parsed.date, parsed.ref);
+  } catch (e) {
+    if (statusEl) statusEl.textContent = '';
+    alert('Erreur OCR : ' + e.message);
+  }
+}
+
+function openDeliveryNoteModal(items, supplier, date, ref) {
+  const summaryEl = document.getElementById('stock-import-summary');
+  const rowsEl = document.getElementById('stock-import-rows');
+  const dateAffiche = date || new Date().toISOString().slice(0, 10);
+  const modal = document.getElementById('stock-import-modal');
+  const titleEl = modal.querySelector('h3');
+  if (titleEl) {
+    titleEl.textContent = '📸 Bon de livraison détecté';
+    titleEl.style.color = '#5ba241';
+  }
+
+  summaryEl.innerHTML = `
+    <strong>${items.length}</strong> ligne(s) détectée(s)
+    ${supplier ? ' — Fournisseur : <strong>' + escapeHtml(supplier) + '</strong>' : ' — Fournisseur : <em>non détecté</em>'}
+    — Date : <strong>${escapeHtml(dateAffiche)}</strong>
+    ${ref ? ' — N° BL : <strong>' + escapeHtml(ref) + '</strong>' : ''}
+    <br><span style="font-size:12px; color:#666;">💡 Pas de prix sur un BL : tu pourras les compléter quand la facture arrivera (onglet Achats).</span>
+  `;
+
+  rowsEl.innerHTML = items.map((it, i) => {
+    const ambiguous = it.ambiguous || !it.qty;
+    const rowStyle = ambiguous ? 'background:#fff8e1;' : '';
+    const checked = ambiguous ? '' : 'checked';
+    const statusBadge = ambiguous
+      ? `<span style="background:#e67e22;color:#fff;padding:1px 6px;border-radius:10px;font-size:10px;">A vérifier</span>`
+      : `<span style="background:#5ba241;color:#fff;padding:1px 6px;border-radius:10px;font-size:10px;">OK</span>`;
+    return `
+      <tr style="${rowStyle}">
+        <td style="padding:5px 8px; text-align:center;">
+          <input type="checkbox" id="sim-chk-${i}" ${checked}>
+        </td>
+        <td style="padding:5px 8px;">
+          <input type="text" id="sim-desc-${i}" value="${escapeAttr(it.desc || '')}"
+            style="width:100%; border:1px solid #ddd; border-radius:4px; padding:3px 6px; font-size:12px;">
+        </td>
+        <td style="padding:5px 8px; text-align:right;">
+          <input type="number" id="sim-qty-${i}" value="${it.qty || 0}" step="0.01" min="0"
+            style="width:70px; border:1px solid ${ambiguous ? '#e74c3c' : '#ddd'}; border-radius:4px; padding:3px 6px; font-size:12px; text-align:right;">
+        </td>
+        <td style="padding:5px 8px;">
+          <input type="text" id="sim-unit-${i}" value="${escapeAttr(it.unit || 'U')}"
+            style="width:60px; border:1px solid #ddd; border-radius:4px; padding:3px 6px; font-size:12px;">
+        </td>
+        <td style="padding:5px 8px; text-align:right;">
+          <input type="number" id="sim-pu-${i}" value="${it.unitPrice || 0}" step="0.01" min="0"
+            placeholder="0"
+            style="width:80px; border:1px solid #ddd; border-radius:4px; padding:3px 6px; font-size:12px; text-align:right; color:#888;">
+        </td>
+        <td style="padding:5px 8px; text-align:right; color:#999;">—</td>
+        <td style="padding:5px 8px;">${statusBadge}</td>
+      </tr>
+    `;
+  }).join('');
+
+  // Peupler le select chantiers si présent
+  const chantierSel = document.getElementById('stock-import-chantier-select');
+  if (chantierSel) {
+    const actifs = (data.chantiers || []).filter(ch => (ch.statut || 'en_cours') !== 'cloture');
+    const statutLabel = { planifie: 'planifie', en_cours: 'en cours' };
+    chantierSel.innerHTML = '<option value="">Aucun chantier (juste pour le stock)</option>' +
+      actifs.map(ch => {
+        const client = data.clients.find(c => c.id === ch.clientId);
+        const nom = client ? client.name : (ch.client || '?');
+        const lbl = `${nom} — ${ch.date || '?'} (${statutLabel[ch.statut || 'en_cours'] || ch.statut})`;
+        return `<option value="${escapeAttr(ch.id)}">${escapeHtml(lbl)}</option>`;
+      }).join('');
+  }
+
+  _stockImportPending = { items, supplier, date: dateAffiche, ref, isDeliveryNote: true };
+  modal.style.display = '';
 }
 
 /* ============ COMPTABILITÉ ============ */
