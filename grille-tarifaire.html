@@ -5317,8 +5317,39 @@ async function parseDevisPDFForChantier(file) {
   // Détection nom client — cherche après "Client :", "Destinataire :", "M. ", "Mme ", etc.
   let clientName = '';
   const clientMatch = text.match(/(?:client|destinataire|adresse\s*client|facture\s*[àa])\s*[:\-]?\s*([A-ZÉÀÂÄÈÊËÎÏÔÖÙÛÜ][^\n]{2,50})/i) ||
-                      text.match(/(?:M\.|Mme|Monsieur|Madame)\s+([A-ZÉÀÂÄÈÊËÎÏÔÖÙÛÜ][A-Za-zÀ-ÿ\s\-]{2,40})/);
+                      text.match(/(?:M\.|Mme|Mr\.?|Monsieur|Madame)\s+([A-ZÉÀÂÄÈÊËÎÏÔÖÙÛÜ][A-Za-zÀ-ÿ\s\-]{2,40})/);
   if (clientMatch) clientName = clientMatch[1].replace(/\s{2,}/g, ' ').trim().slice(0, 60);
+
+  // Détection email
+  let clientEmail = '';
+  const emailMatch = text.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
+  if (emailMatch) clientEmail = emailMatch[0].trim();
+
+  // Détection téléphone FR (format 0X XX XX XX XX ou +33 X XX XX XX XX)
+  let clientPhone = '';
+  const phoneMatch = text.match(/(?:\+33[\s.\-]?[1-9]|0[1-9])(?:[\s.\-]?\d{2}){4}/);
+  if (phoneMatch) clientPhone = phoneMatch[0].replace(/\s+/g, ' ').trim();
+
+  // Détection adresse : cherche une ligne avec un CP 5 chiffres FR
+  let clientAddress = '';
+  // Cherche d'abord les blocs après des labels courants
+  const addrBlockMatch = text.match(/(?:adresse(?:\s*client)?|facture\s*[àa]|livr(?:aison|e)\s*[àa])\s*[:\-]?\s*\n?((?:[^\n]+\n?){1,4}?\d{5}[^\n]*)/i);
+  if (addrBlockMatch) {
+    clientAddress = addrBlockMatch[1].replace(/\s{2,}/g, ' ').replace(/\n+/g, ', ').trim().slice(0, 120);
+  } else {
+    // Cherche toute ligne contenant un CP 5 chiffres (hors numéros de devis)
+    const cpMatch = text.match(/[^\n]*\b\d{5}\b[^\n]*/);
+    if (cpMatch) {
+      // Essaie de récupérer la ligne précédente (numéro + rue) si elle ressemble à une adresse
+      const linesBefore = text.slice(0, text.indexOf(cpMatch[0])).split('\n');
+      const prevLine = linesBefore[linesBefore.length - 1]?.trim() || '';
+      if (prevLine && /\d/.test(prevLine) && prevLine.length < 80) {
+        clientAddress = (prevLine + ', ' + cpMatch[0].trim()).replace(/\s{2,}/g, ' ').slice(0, 120);
+      } else {
+        clientAddress = cpMatch[0].replace(/\s{2,}/g, ' ').trim().slice(0, 120);
+      }
+    }
+  }
 
   // Détection date d'intervention (cherche des patterns spécifiques en plus de la date générale)
   let dateIntervention = '';
@@ -5342,6 +5373,9 @@ async function parseDevisPDFForChantier(file) {
 
   return {
     client: clientName,
+    email: clientEmail,
+    phone: clientPhone,
+    address: clientAddress,
     date: dateIntervention,
     montantHT: totalHT,
     materielLibre: materielText,
@@ -5379,18 +5413,34 @@ async function openDevisPDFImportChantier(event) {
 
     _pendingDevisPDFData = result;
 
-    // Construire le récap à afficher dans la modale
-    let html = '';
-    html += `<strong>Fichier :</strong> ${escapeHtml(result.fileName)}<br>`;
-    if (result.client) html += `<strong>Client detecte :</strong> ${escapeHtml(result.client)}<br>`;
-    if (result.date) html += `<strong>Date :</strong> ${result.date}<br>`;
-    if (result.montantHT > 0) html += `<strong>Montant HT :</strong> ${result.montantHT.toFixed(2)} €<br>`;
-    html += `<strong>Lignes detectees :</strong> ${result.nbLignes}<br>`;
+    // Construire le récap enrichi avec champs éditables
+    const fld = (label, icon, id, val, type='text') =>
+      `<div style="margin-bottom:7px;">
+        <label style="font-size:12px;color:#666;display:block;margin-bottom:2px;">${icon} ${label}</label>
+        <input id="pdf-recap-${id}" type="${type}" value="${escapeAttr(val)}"
+          style="width:100%;padding:5px 8px;border:1px solid #d4d4d4;border-radius:6px;font-size:13px;box-sizing:border-box;">
+      </div>`;
+
+    let html = `<div style="font-size:12px;color:#888;margin-bottom:10px;">Fichier : ${escapeHtml(result.fileName)}</div>`;
+    html += fld('Client', '👤', 'client', result.client || '');
+    html += fld('Adresse', '📍', 'address', result.address || '');
+    html += fld('Email', '📧', 'email', result.email || '', 'email');
+    html += fld('Téléphone', '📞', 'phone', result.phone || '');
+    html += fld('Date intervention', '📅', 'date', result.date || '', 'date');
+    html += `<div style="display:flex;gap:12px;margin-bottom:7px;">
+      <div style="flex:1;"><label style="font-size:12px;color:#666;display:block;margin-bottom:2px;">💶 Montant HT (€)</label>
+        <input id="pdf-recap-montantHT" type="number" step="0.01" value="${result.montantHT > 0 ? result.montantHT.toFixed(2) : ''}"
+          style="width:100%;padding:5px 8px;border:1px solid #d4d4d4;border-radius:6px;font-size:13px;box-sizing:border-box;">
+      </div>
+      <div style="flex:1;align-self:flex-end;padding-bottom:2px;font-size:13px;color:#555;">
+        📋 ${result.nbLignes} ligne${result.nbLignes > 1 ? 's' : ''} détectée${result.nbLignes > 1 ? 's' : ''}
+      </div>
+    </div>`;
     if (result.materielLibre) {
-      html += `<strong>Materiel :</strong><br><span style="font-size:12px; white-space:pre-wrap; color:#555;">${escapeHtml(result.materielLibre.slice(0, 400))}${result.materielLibre.length > 400 ? '...' : ''}</span><br>`;
+      html += `<div style="font-size:12px;color:#555;background:#f7f9f5;border-radius:6px;padding:7px 10px;max-height:80px;overflow-y:auto;white-space:pre-wrap;">${escapeHtml(result.materielLibre.slice(0,400))}${result.materielLibre.length > 400 ? '…' : ''}</div>`;
     }
     if (!result.client && !result.date && result.montantHT === 0) {
-      html += `<div style="color:#e67e22; margin-top:6px; font-size:12px;">Peu d'infos extraites — verifie et complete manuellement.</div>`;
+      html += `<div style="color:#e67e22;margin-top:8px;font-size:12px;">⚠️ Peu d'infos extraites — vérifie et complète manuellement.</div>`;
     }
     recap.innerHTML = html;
     modal.style.display = 'flex';
@@ -5405,15 +5455,27 @@ function applyDevisPDFToChantierForm() {
   if (!d) return;
   document.getElementById('modal-devis-pdf-chantier').style.display = 'none';
 
-  // Remplir seulement si le champ est vide (ne pas écraser ce qu'Alex a déjà saisi)
+  // Lire les valeurs depuis les champs éditables de la modale (Alex a pu les corriger)
+  const g = id => (document.getElementById('pdf-recap-' + id)?.value || '').trim();
+  const editedClient   = g('client');
+  const editedAddress  = g('address');
+  const editedEmail    = g('email');
+  const editedPhone    = g('phone');
+  const editedDate     = g('date');
+  const editedMontant  = parseFloat(g('montantHT')) || 0;
+
+  // Remplir le formulaire chantier (ne pas écraser ce qu'Alex a déjà saisi)
   const clientInput = document.getElementById('new-client');
-  if (d.client && !clientInput.value.trim()) clientInput.value = d.client;
+  if (editedClient && !clientInput.value.trim()) clientInput.value = editedClient;
+
+  const adresseInput = document.getElementById('new-adresse');
+  if (editedAddress && !adresseInput.value.trim()) adresseInput.value = editedAddress;
 
   const dateInput = document.getElementById('new-date');
-  if (d.date && !dateInput.value) dateInput.value = d.date;
+  if (editedDate && !dateInput.value) dateInput.value = editedDate;
 
   const montantInput = document.getElementById('new-montantHT');
-  if (d.montantHT > 0 && !montantInput.value) montantInput.value = d.montantHT.toFixed(2);
+  if (editedMontant > 0 && !montantInput.value) montantInput.value = editedMontant.toFixed(2);
 
   const materielInput = document.getElementById('new-materiel-prevu');
   if (d.materielLibre && !materielInput.value.trim()) materielInput.value = d.materielLibre;
@@ -5423,8 +5485,48 @@ function applyDevisPDFToChantierForm() {
   if (!notesInput.value.trim()) notesInput.value = noteImport;
   else if (!notesInput.value.includes('importe depuis')) notesInput.value += '\n' + noteImport;
 
+  // --- Upsert client dans data.clients ---
+  const nomFinal = editedClient || clientInput.value.trim();
+  if (nomFinal) {
+    // Matching tolérant : casse + espaces
+    const normalize = s => s.toLowerCase().replace(/\s+/g, ' ').trim();
+    let clientRec = (data.clients || []).find(c => normalize(c.name) === normalize(nomFinal));
+    let toastMsg = '';
+    if (clientRec) {
+      // Client existant : enrichir seulement les champs vides
+      let updated = [];
+      if (editedEmail && !clientRec.email)   { clientRec.email   = editedEmail;   updated.push('email'); }
+      if (editedPhone && !clientRec.phone)   { clientRec.phone   = editedPhone;   updated.push('téléphone'); }
+      if (editedAddress && !clientRec.address) { clientRec.address = editedAddress; updated.push('adresse'); }
+      if (updated.length > 0) {
+        saveData();
+        toastMsg = `Client ${nomFinal} mis à jour : ${updated.join(' + ')} ajouté${updated.length > 1 ? 's' : ''}`;
+      } else {
+        toastMsg = `Client ${nomFinal} reconnu`;
+      }
+    } else if (editedEmail || editedPhone || editedAddress) {
+      // Nouveau client avec au moins une info de contact : on crée déjà la fiche
+      clientRec = {
+        id: 'cl_' + Date.now() + '_' + Math.random().toString(36).slice(2,6),
+        name: nomFinal,
+        address: editedAddress,
+        phone: editedPhone,
+        email: editedEmail,
+        notes: `Créé depuis import devis ${d.fileName}`,
+        createdAt: new Date().toISOString()
+      };
+      if (!data.clients) data.clients = [];
+      data.clients.push(clientRec);
+      saveData();
+      toastMsg = `Client ${nomFinal} créé avec email/tél/adresse`;
+    }
+    if (toastMsg) toast(toastMsg);
+    else toast('Formulaire pré-rempli depuis le PDF');
+  } else {
+    toast('Formulaire pré-rempli depuis le PDF');
+  }
+
   _pendingDevisPDFData = null;
-  toast('Formulaire pre-rempli depuis le PDF');
 }
 
 /* ============ ACHATS (factures fournisseurs) ============ */
