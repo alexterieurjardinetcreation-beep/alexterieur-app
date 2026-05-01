@@ -1222,8 +1222,61 @@
 
   <!-- PAGE CHANTIERS (page d'accueil) -->
   <div id="page-chantiers" class="page active">
+
+    <!-- Tableau de bord (KPIs) — EN HAUT -->
+    <div class="card" id="dashboard-card">
+      <div id="dashboard-content"></div>
+    </div>
+
+    <!-- Récap semaine -->
+    <div class="card" id="recap-semaine-card">
+      <div id="recap-semaine-content"></div>
+    </div>
+
+    <!-- Planning hebdo visuel -->
+    <div class="card" id="planning-hebdo-card">
+      <div id="planning-hebdo-content"></div>
+    </div>
+
+    <!-- Alertes dynamiques -->
+    <div id="alertes-chantiers-card" style="display:none;">
+      <div id="alertes-chantiers-content"></div>
+    </div>
+
+    <!-- Carnet sous-traitants -->
+    <div class="card" id="soustraitants-card" style="display:none;">
+      <h3>Carnet sous-traitants</h3>
+      <div id="soustraitants-list"></div>
+      <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
+        <input type="text" id="st-name" placeholder="Nom (ex: Thibault)" style="padding:6px 10px; border:1px solid #d4d4d4; border-radius:4px; flex:1; min-width:120px;">
+        <input type="number" id="st-taux" placeholder="Tarif/jour (€)" step="10" style="padding:6px 10px; border:1px solid #d4d4d4; border-radius:4px; width:140px;">
+        <button class="btn-add btn-small" onclick="addSoustraitant()">+ Ajouter</button>
+      </div>
+    </div>
+
+    <!-- Liste des chantiers -->
     <div class="card">
-      <h3>Ajouter un chantier</h3>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+        <h3 style="margin:0;">Mes chantiers <button class="btn-secondary btn-small" style="margin-left:10px;" onclick="toggleSoustraitantsCard()">Sous-traitants</button></h3>
+        <button class="btn-add btn-small" onclick="openModalAddChantier()" style="white-space:nowrap;">+ Nouveau chantier</button>
+      </div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+        <button class="btn-secondary btn-small" onclick="setChantierFilter('')" id="cf-all">Tous</button>
+        <button class="btn-secondary btn-small" onclick="setChantierFilter('planifie')" id="cf-planifie">Planifiés</button>
+        <button class="btn-secondary btn-small" onclick="setChantierFilter('en_cours')" id="cf-en_cours">En cours</button>
+        <button class="btn-secondary btn-small" onclick="setChantierFilter('cloture')" id="cf-cloture">Clôturés</button>
+        <button class="btn-secondary btn-small" onclick="setChantierFilterImpayes()" id="cf-impayes">Impayés</button>
+      </div>
+      <div id="chantiers-summary" style="margin-bottom:8px;"></div>
+      <div id="chantiers-list"></div>
+    </div>
+
+    <div class="card" id="chantier-detail" style="display:none;">
+      <div id="chantier-detail-content"></div>
+    </div>
+
+    <!-- Formulaire d'ajout chantier — caché, utilisé par la modal -->
+    <div id="form-add-chantier" style="display:none;">
       <div class="form-grid">
         <div class="field">
           <label>Client</label>
@@ -1281,12 +1334,11 @@
       <div style="margin-top:14px; padding:10px 12px; background:#f0f7eb; border:1px dashed #5ba241; border-radius:8px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
         <span style="font-size:13px; color:#3d6f28; font-weight:500;">Tu as un devis signé en PDF ?</span>
         <label class="btn-secondary btn-small" style="cursor:pointer; margin:0;">
-          📎 Importer un devis PDF (auto-remplir)
+          Importer un devis PDF (auto-remplir)
           <input type="file" accept=".pdf,image/jpeg,image/png" style="display:none;" onchange="openDevisPDFImportChantier(event)">
         </label>
         <span id="chantier-pdf-status" style="font-size:12px; color:#888;"></span>
       </div>
-      <button class="btn-add" style="margin-top:12px;" onclick="saveChantier()">Enregistrer le chantier</button>
     </div>
 
     <!-- Modale confirmation import PDF chantier -->
@@ -1301,64 +1353,21 @@
       </div>
     </div>
 
-    <!-- Aujourd'hui dans ton agenda Google -->
-    <div class="card" id="today-agenda-card">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:6px;">
-        <h3 style="margin:0;">📅 Aujourd'hui dans ton agenda</h3>
-        <button class="btn-secondary btn-small" onclick="renderTodayAgenda(true)">🔄 Rafraîchir</button>
-      </div>
-      <div id="today-agenda-content"></div>
-    </div>
-
-    <!-- Tableau de bord (KPIs) -->
-    <div class="card" id="dashboard-card">
-      <div id="dashboard-content"></div>
-    </div>
-
-    <!-- Récap semaine -->
-    <div class="card" id="recap-semaine-card">
-      <div id="recap-semaine-content"></div>
-    </div>
-
-    <!-- Carnet sous-traitants -->
-    <div class="card" id="soustraitants-card" style="display:none;">
-      <h3>Carnet sous-traitants</h3>
-      <div id="soustraitants-list"></div>
-      <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
-        <input type="text" id="st-name" placeholder="Nom (ex: Thibault)" style="padding:6px 10px; border:1px solid #d4d4d4; border-radius:4px; flex:1; min-width:120px;">
-        <input type="number" id="st-taux" placeholder="Tarif/jour (€)" step="10" style="padding:6px 10px; border:1px solid #d4d4d4; border-radius:4px; width:140px;">
-        <button class="btn-add btn-small" onclick="addSoustraitant()">+ Ajouter</button>
+    <!-- Modal d'ajout de chantier (déclenchée depuis Chantiers ou fiche Client) -->
+    <div id="modal-add-chantier" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:2000; justify-content:center; align-items:flex-start; padding-top:40px; overflow-y:auto;">
+      <div style="background:#fff; border-radius:12px; padding:24px; max-width:600px; width:94%; box-shadow:0 8px 32px rgba(0,0,0,0.2); margin-bottom:40px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px;">
+          <h3 style="margin:0; color:#3d6f28;">Nouveau chantier</h3>
+          <button class="btn-secondary btn-small" onclick="closeModalAddChantier()">Fermer</button>
+        </div>
+        <div id="modal-add-chantier-body"></div>
+        <div style="display:flex; gap:8px; margin-top:16px; justify-content:flex-end; flex-wrap:wrap;">
+          <button class="btn-secondary" onclick="closeModalAddChantier()">Annuler</button>
+          <button class="btn-add" onclick="saveChantierFromModal()">Enregistrer le chantier</button>
+        </div>
       </div>
     </div>
 
-    <div class="card">
-      <h3>Filtrer <button class="btn-secondary btn-small" style="margin-left:10px;" onclick="toggleSoustraitantsCard()">Sous-traitants</button></h3>
-      <div style="display:flex; gap:8px; flex-wrap:wrap;">
-        <button class="btn-secondary btn-small" onclick="setChantierFilter('')" id="cf-all">Tous</button>
-        <button class="btn-secondary btn-small" onclick="setChantierFilter('planifie')" id="cf-planifie">Planifiés</button>
-        <button class="btn-secondary btn-small" onclick="setChantierFilter('en_cours')" id="cf-en_cours">En cours</button>
-        <button class="btn-secondary btn-small" onclick="setChantierFilter('cloture')" id="cf-cloture">Clôturés</button>
-      </div>
-    </div>
-
-    <div class="card">
-      <h3>Synthèse</h3>
-      <div id="chantiers-summary"></div>
-    </div>
-
-    <div class="card">
-      <h3>Historique des chantiers</h3>
-      <div id="chantiers-list"></div>
-    </div>
-
-    <div class="card" id="chantier-detail" style="display:none;">
-      <div id="chantier-detail-content"></div>
-    </div>
-
-    <!-- Planning hebdo visuel -->
-    <div class="card" id="planning-hebdo-card">
-      <div id="planning-hebdo-content"></div>
-    </div>
   </div>
 
   <!-- PAGE GRAVIER -->
@@ -2519,6 +2528,7 @@ function computeChantierStats(ch) {
 
 function setChantierFilter(statut) {
   chantierStatutFilter = statut;
+  chantierImpayesFilter = false;
   renderChantiers();
 }
 
@@ -2531,15 +2541,18 @@ function renderChantiers() {
     const btn = document.getElementById('cf-' + k);
     if (btn) btn.style.fontWeight = (chantierStatutFilter === (k === 'all' ? '' : k)) ? '700' : '400';
   });
+  // Bouton impayés
+  const btnImpayes = document.getElementById('cf-impayes');
+  if (btnImpayes) btnImpayes.style.fontWeight = chantierImpayesFilter ? '700' : '400';
 
-  renderTodayAgenda();
   renderDashboard();
   renderRecapSemaine();
   renderPlanningHebdo();
+  renderChantiersAlertes();
 
   if (data.chantiers.length === 0) {
-    list.innerHTML = '<div class="empty-state">Aucun chantier enregistré.</div>';
-    summary.innerHTML = '<div style="color:#888;">Ajoute des chantiers pour voir la synthèse.</div>';
+    list.innerHTML = '<div class="empty-state">Aucun chantier enregistré. Ajoute le premier depuis la fiche d\'un client (onglet Clients).</div>';
+    summary.innerHTML = '';
     renderPrestaLines();
     return;
   }
@@ -2576,10 +2589,15 @@ function renderChantiers() {
     `;
   }
 
-  // Filtrer par statut
-  const filtered = chantierStatutFilter
-    ? data.chantiers.filter(ch => (ch.statut || 'en_cours') === chantierStatutFilter)
-    : data.chantiers;
+  // Filtrer par statut ou impayés
+  let filtered;
+  if (chantierImpayesFilter) {
+    filtered = data.chantiers.filter(ch => (ch.statut || 'en_cours') === 'cloture' && ch.paid === false);
+  } else {
+    filtered = chantierStatutFilter
+      ? data.chantiers.filter(ch => (ch.statut || 'en_cours') === chantierStatutFilter)
+      : data.chantiers;
+  }
 
   if (filtered.length === 0) {
     list.innerHTML = '<div class="empty-state">Aucun chantier pour ce filtre.</div>';
@@ -2656,6 +2674,249 @@ function removeChantier(id) {
   data.chantiers = data.chantiers.filter(c => c.id !== id);
   saveData();
   renderChantiers();
+}
+
+/* ============ FILTRE IMPAYES ============ */
+
+let chantierImpayesFilter = false;
+
+function setChantierFilterImpayes() {
+  chantierImpayesFilter = !chantierImpayesFilter;
+  if (chantierImpayesFilter) {
+    chantierStatutFilter = '';
+  }
+  renderChantiers();
+}
+
+/* ============ MODAL AJOUT CHANTIER ============ */
+
+// Pré-rempli depuis la fiche client (optionnel)
+let _modalChantierClientId = null;
+
+function openModalAddChantier(clientId) {
+  _modalChantierClientId = clientId || null;
+  const modal = document.getElementById('modal-add-chantier');
+  if (!modal) return;
+
+  // Construire le contenu du formulaire dans la modal
+  const client = clientId ? data.clients.find(c => c.id === clientId) : null;
+  const clientName = client ? client.name : '';
+  const clientAdresse = client ? (client.address || '') : '';
+
+  const body = document.getElementById('modal-add-chantier-body');
+  body.innerHTML = `
+    <div class="form-grid">
+      <div class="field">
+        <label>Client</label>
+        <input id="modal-new-client" type="text" placeholder="Nom du client" value="${escapeHtml(clientName)}" ${client ? 'readonly style="background:#f5f5f5;"' : ''}>
+      </div>
+      <div class="field">
+        <label>Date prévue</label>
+        <input id="modal-new-date" type="date" value="${new Date().toISOString().slice(0,10)}">
+      </div>
+      <div class="field">
+        <label>Adresse chantier</label>
+        <input id="modal-new-adresse" type="text" placeholder="ex: 12 rue des Lilas, Mâcon" value="${escapeHtml(clientAdresse)}">
+      </div>
+      <div class="field">
+        <label>Type</label>
+        <div style="display:flex; gap:14px; margin-top:6px;">
+          <label style="font-weight:400; font-size:14px;"><input type="radio" name="modal-new-type" value="perso" checked style="margin-right:5px;">Perso</label>
+          <label style="font-weight:400; font-size:14px;"><input type="radio" name="modal-new-type" value="babad" style="margin-right:5px;">BABAD</label>
+        </div>
+      </div>
+      <div class="field">
+        <label>Statut</label>
+        <select id="modal-new-statut">
+          <option value="planifie">Planifié</option>
+          <option value="en_cours">En cours</option>
+          <option value="cloture">Clôturé</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Montant HT (€) <span style="font-size:11px; color:#888;">si pas de devis lié</span></label>
+        <input id="modal-new-montantHT" type="number" step="0.01" placeholder="ex: 2500">
+      </div>
+      <div class="field">
+        <label>Durée réelle (h)</label>
+        <input id="modal-new-hours" type="number" step="0.25" placeholder="ex: 8">
+      </div>
+      <div class="field">
+        <label>Coût matériel réel (€ HT)</label>
+        <input id="modal-new-cost" type="number" step="0.01" placeholder="ex: 150">
+      </div>
+    </div>
+    <div class="field" style="margin-top:8px;">
+      <label>Matériel prévu (optionnel)</label>
+      <textarea id="modal-new-materiel-prevu" rows="2" placeholder="ex: 2T gravier 6/10, 20m2 bidim, 5m3 sable" style="width:100%; padding:8px; border:1px solid #d4d4d4; border-radius:6px; font-family:inherit;"></textarea>
+    </div>
+    <div class="field" style="margin-top:8px;">
+      <label>Notes (optionnel)</label>
+      <textarea id="modal-new-notes" rows="2" style="width:100%; padding:8px; border:1px solid #d4d4d4; border-radius:6px; font-family:inherit;"></textarea>
+    </div>
+  `;
+
+  modal.style.display = 'flex';
+  // Focus sur le champ client si pas pré-rempli
+  if (!client) {
+    setTimeout(() => { const el = document.getElementById('modal-new-client'); if (el) el.focus(); }, 100);
+  } else {
+    setTimeout(() => { const el = document.getElementById('modal-new-date'); if (el) el.focus(); }, 100);
+  }
+}
+
+function closeModalAddChantier() {
+  const modal = document.getElementById('modal-add-chantier');
+  if (modal) modal.style.display = 'none';
+  _modalChantierClientId = null;
+}
+
+function saveChantierFromModal() {
+  const clientInput = document.getElementById('modal-new-client');
+  const dateInput = document.getElementById('modal-new-date');
+  const adresseInput = document.getElementById('modal-new-adresse');
+  const typeEl = document.querySelector('input[name="modal-new-type"]:checked');
+  const statutEl = document.getElementById('modal-new-statut');
+  const montantEl = document.getElementById('modal-new-montantHT');
+  const hoursEl = document.getElementById('modal-new-hours');
+  const costEl = document.getElementById('modal-new-cost');
+  const materielEl = document.getElementById('modal-new-materiel-prevu');
+  const notesEl = document.getElementById('modal-new-notes');
+
+  if (!clientInput || !clientInput.value.trim()) {
+    alert("Le nom du client est obligatoire.");
+    return;
+  }
+
+  const clientName = clientInput.value.trim();
+  const adresse = adresseInput ? adresseInput.value.trim() : '';
+
+  // Trouver ou créer le client
+  let clientRec = _modalChantierClientId
+    ? data.clients.find(c => c.id === _modalChantierClientId)
+    : data.clients.find(c => c.name.toLowerCase() === clientName.toLowerCase());
+  if (!clientRec) {
+    clientRec = {
+      id: 'cl_' + Date.now() + '_' + Math.random().toString(36).slice(2,6),
+      name: clientName, address: adresse, phone: '', email: '', notes: '',
+      createdAt: new Date().toISOString()
+    };
+    data.clients.push(clientRec);
+  }
+
+  const chantier = {
+    id: 'ch_' + Date.now(),
+    client: clientRec.name,
+    clientId: clientRec.id,
+    date: (dateInput && dateInput.value) || new Date().toISOString().slice(0,10),
+    adresse,
+    type: typeEl ? typeEl.value : 'perso',
+    statut: statutEl ? statutEl.value : 'planifie',
+    montantHT: parseFloat(montantEl && montantEl.value) || 0,
+    hours: parseFloat(hoursEl && hoursEl.value) || 0,
+    materialCost: parseFloat(costEl && costEl.value) || 0,
+    materielLibre: materielEl ? materielEl.value.trim() : '',
+    notes: notesEl ? notesEl.value.trim() : '',
+    prestations: [],
+    achats: []
+  };
+
+  data.chantiers.push(chantier);
+  saveData();
+
+  if (typeof googleSyncChantierEvent === 'function') {
+    try { googleSyncChantierEvent(chantier); } catch(e) { console.warn('Calendar sync error', e); }
+  }
+
+  closeModalAddChantier();
+  renderChantiers();
+
+  // Si appelé depuis la fiche client, rafraîchir l'affichage
+  if (_modalChantierClientId || clientRec.id) {
+    const cid = _modalChantierClientId || clientRec.id;
+    if (typeof viewClient === 'function' && document.getElementById('cl-detail') && document.getElementById('cl-detail').style.display !== 'none') {
+      viewClient(cid);
+    }
+  }
+
+  toast("Chantier enregistré");
+}
+
+/* ============ ALERTES CHANTIERS ============ */
+
+function renderChantiersAlertes() {
+  const card = document.getElementById('alertes-chantiers-card');
+  const content = document.getElementById('alertes-chantiers-content');
+  if (!card || !content) return;
+
+  const alertes = [];
+
+  // 1. Impayés
+  const impayes = (data.chantiers || []).filter(ch => (ch.statut || 'en_cours') === 'cloture' && ch.paid === false);
+  if (impayes.length > 0) {
+    const totalImpayes = impayes.reduce((s, ch) => {
+      try { return s + (computeChantierStats(ch).revenue || 0); } catch(e) { return s + (ch.montantHT || 0); }
+    }, 0);
+    alertes.push({
+      level: 'urgent',
+      icon: '💸',
+      text: `${impayes.length} facture${impayes.length > 1 ? 's' : ''} impayée${impayes.length > 1 ? 's' : ''} — ${totalImpayes.toFixed(0)} € à relancer`,
+      action: `onclick="setChantierFilter('cloture'); document.getElementById('cf-impayes') && setChantierFilterImpayes(); document.getElementById('chantiers-list').scrollIntoView({behavior:'smooth'})"`
+    });
+  }
+
+  // 2. Stock bas
+  const stockBas = (data.stock || []).filter(item => (item.qty || 0) <= (item.alertThreshold !== undefined ? item.alertThreshold : 1));
+  if (stockBas.length > 0) {
+    const exemples = stockBas.slice(0, 2).map(i => escapeHtml(i.desc || 'article')).join(', ');
+    alertes.push({
+      level: 'warning',
+      icon: '📦',
+      text: `${stockBas.length} article${stockBas.length > 1 ? 's' : ''} en stock bas (${exemples}${stockBas.length > 2 ? '…' : ''})`,
+      action: `onclick="showPage('stock')" style="cursor:pointer;"`
+    });
+  }
+
+  // 3. Avis Google à demander (chantiers cloturés depuis > 3 jours sans demande)
+  const now = Date.now();
+  const chantiersSansAvis = (data.chantiers || []).filter(ch => {
+    if ((ch.statut || '') !== 'cloture') return false;
+    if (ch.avisGoogleDemande) return false;
+    if (!ch.date) return false;
+    const d = new Date(ch.date + 'T00:00:00');
+    const diffDays = (now - d.getTime()) / (1000 * 60 * 60 * 24);
+    return diffDays > 3 && diffDays < 60;
+  });
+  if (chantiersSansAvis.length > 0) {
+    alertes.push({
+      level: 'info',
+      icon: '⭐',
+      text: `${chantiersSansAvis.length} client${chantiersSansAvis.length > 1 ? 's' : ''} à relancer pour un avis Google`,
+      action: ''
+    });
+  }
+
+  if (alertes.length === 0) {
+    card.style.display = 'none';
+    return;
+  }
+
+  card.style.display = 'block';
+  const colors = { urgent: { bg: '#fff0f0', border: '#e74c3c', icon: '#e74c3c' }, warning: { bg: '#fff8ec', border: '#e67e22', icon: '#e67e22' }, info: { bg: '#f0f7ff', border: '#2980b9', icon: '#2980b9' } };
+  content.innerHTML = `
+    <div style="margin-bottom:16px;">
+      <div style="font-size:13px; font-weight:700; color:#555; text-transform:uppercase; letter-spacing:.05em; margin-bottom:8px; padding:0 2px;">Alertes</div>
+      <div style="display:flex; flex-direction:column; gap:8px;">
+        ${alertes.map(a => {
+          const c = colors[a.level] || colors.info;
+          return `<div ${a.action} style="display:flex; align-items:center; gap:10px; padding:10px 14px; background:${c.bg}; border-left:3px solid ${c.border}; border-radius:0 8px 8px 0; font-size:13px; ${a.action ? 'cursor:pointer;' : ''}">
+            <span style="font-size:16px; flex-shrink:0;">${a.icon}</span>
+            <span>${a.text}</span>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+  `;
 }
 
 /* ============ ASSISTANT ============ */
@@ -3368,6 +3629,7 @@ function viewClient(id) {
   const detail = document.getElementById('cl-detail');
   detail.style.display = 'block';
   document.getElementById('cl-detail-title').textContent = 'Historique : ' + c.name;
+  const statutLabel = { planifie: 'Planifié', en_cours: 'En cours', cloture: 'Clôturé' };
   document.getElementById('cl-detail-content').innerHTML = `
     <div class="chantier-stats" style="margin-bottom:12px;">
       <div>${chantiers.length} chantier(s)</div>
@@ -3375,15 +3637,34 @@ function viewClient(id) {
       <div>CA total : <strong>${totalCA.toFixed(2)} € HT</strong></div>
       <div>Heures : <strong>${totalHeures.toFixed(1)} h</strong></div>
     </div>
-    ${chantiers.length > 0 ? `
-      <h4 style="margin-bottom:6px;">Chantiers</h4>
-      ${chantiers.slice().reverse().map(ch => {
-        const s = computeChantierStats(ch);
-        return `<div style="padding:6px 10px; background:#fafcf7; border-radius:4px; margin-bottom:4px; font-size:13px;">
-          ${ch.date} — ${ch.hours}h — <strong>${s.revenue.toFixed(2)} €</strong>
-        </div>`;
-      }).join('')}
-    ` : ''}
+
+    <!-- Section Chantiers avec bouton ajout -->
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:6px;">
+      <h4 style="margin:0; color:#3d6f28;">Chantiers de ce client</h4>
+      <button class="btn-add btn-small" onclick="openModalAddChantier('${id}')">+ Nouveau chantier</button>
+    </div>
+    ${chantiers.length === 0 ? `<div style="color:#888; font-size:13px; padding:6px 0; margin-bottom:12px;">Aucun chantier pour ce client.</div>` : `
+      <div style="margin-bottom:14px;">
+        ${chantiers.slice().reverse().map(ch => {
+          const s = computeChantierStats(ch);
+          const statut = ch.statut || 'en_cours';
+          const statColors = { planifie: '#95a5a6', en_cours: '#f39c12', cloture: '#27ae60' };
+          const statColor = statColors[statut] || '#888';
+          const paidBadge = (statut === 'cloture' && ch.paid === false)
+            ? `<span style="background:#e74c3c; color:#fff; padding:1px 6px; border-radius:4px; font-size:10px; margin-left:4px;">Impayé</span>` : '';
+          return `<div style="display:flex; justify-content:space-between; align-items:center; padding:8px 12px; background:#fafcf7; border-left:3px solid ${statColor}; border-radius:0 6px 6px 0; margin-bottom:4px; gap:8px; flex-wrap:wrap;">
+            <div style="flex:1; min-width:0;">
+              <div style="font-size:13px; font-weight:600;">${escapeHtml(ch.adresse || ch.date || '?')}</div>
+              <div style="font-size:12px; color:#666;">${ch.date} · ${ch.hours}h · <strong>${s.revenue.toFixed(0)} € HT</strong>
+                <span style="background:${statColor}; color:#fff; padding:1px 6px; border-radius:4px; font-size:10px; margin-left:4px;">${statutLabel[statut] || statut}</span>${paidBadge}
+              </div>
+            </div>
+            <button class="btn-secondary btn-small" onclick="showPage('chantiers'); setTimeout(()=>viewChantier('${ch.id}'),150);">Ouvrir</button>
+          </div>`;
+        }).join('')}
+      </div>
+    `}
+
     ${devis.length > 0 ? `
       <h4 style="margin-top:14px; margin-bottom:6px;">Devis</h4>
       ${devis.slice().reverse().map(d => `
@@ -3394,7 +3675,7 @@ function viewClient(id) {
       `).join('')}
     ` : ''}
     <div style="margin-top:14px; padding:12px; background:#f0f7eb; border-left:3px solid #5ba241; border-radius:0 6px 6px 0;">
-      <div style="font-weight:600; color:#3d6f28; margin-bottom:6px;">📊 Rapport annuel pour ce client</div>
+      <div style="font-weight:600; color:#3d6f28; margin-bottom:6px;">Rapport annuel pour ce client</div>
       <p style="font-size:12px; color:#666; margin:4px 0 8px;">
         Genere un PDF "bilan de l'annee" avec les chantiers + photos. Idéal pour fideliser !
       </p>
@@ -3407,7 +3688,7 @@ function viewClient(id) {
             return Array.from(years).sort((a,b) => b - a).map(y => `<option value="${y}">${y}</option>`).join('');
           })()}
         </select>
-        <button class="btn-add btn-small" onclick="printRapportAnnuelClient('${id}', document.getElementById('rapport-annuel-year-${id}').value)">📄 Generer le rapport PDF</button>
+        <button class="btn-add btn-small" onclick="printRapportAnnuelClient('${id}', document.getElementById('rapport-annuel-year-${id}').value)">Generer le rapport PDF</button>
       </div>
     </div>
 
