@@ -2599,6 +2599,9 @@ function renderChantiers() {
     const nomClient = escapeHtml(ch.client || (data.clients.find(cl => cl.id === ch.clientId)?.name) || '?');
     const typeBadge = `<span class="badge-${ch.type || 'perso'}">${(ch.type || 'perso') === 'babad' ? 'BABAD' : 'Perso'}</span>`;
     const statutBadge = `<span class="badge-${ch.statut || 'en_cours'}">${statutLabel[ch.statut || 'en_cours'] || ch.statut}</span>`;
+    const paidBadge = ((ch.statut || '') === 'cloture' && ch.paid === false)
+      ? `<span style="background:#e74c3c; color:#fff; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600;">🔴 Impayé</span>`
+      : '';
     const isPatronMode = (typeof isPatron === 'function' && isPatron());
     const showWeather = ((ch.statut || 'en_cours') === 'planifie') && ch.adresse && ch.date && isFutureOrToday(ch.date);
     return `
@@ -2606,7 +2609,7 @@ function renderChantiers() {
         <div class="chantier-head">
           <div>
             <div class="chantier-title">${nomClient}${ch.devisId ? ' <span style="font-size:11px; color:#2ecc71;">depuis devis</span>' : ''}</div>
-            <div class="chantier-badges">${typeBadge} ${statutBadge}</div>
+            <div class="chantier-badges">${typeBadge} ${statutBadge} ${paidBadge}</div>
             <div class="chantier-meta">${ch.date}${ch.adresse ? ' — ' + escapeHtml(ch.adresse) : ''} — ${ch.hours}h${(isPatronMode && ch.materialCost) ? ' — ' + ch.materialCost + '€ mat.' : ''}</div>
             ${showWeather ? `<div class="weather-slot" id="weather-slot-${ch.id}" style="margin-top:5px; font-size:12px; color:#666;">🌦️ Chargement météo…</div>` : ''}
           </div>
@@ -6967,6 +6970,16 @@ function updateChantierField(chId, field, val) {
   if (calendarFields.includes(field) && typeof googleSyncChantierEvent === 'function') {
     try { googleSyncChantierEvent(ch); } catch(e) { console.warn('Calendar sync error', e); }
   }
+}
+
+function updateChantierPaid(chId, paid) {
+  const ch = data.chantiers.find(c => c.id === chId);
+  if (!ch) return;
+  ch.paid = !!paid;
+  saveData();
+  renderChantierDetail(ch);
+  renderChantiers();
+  toast(ch.paid ? '🟢 Marqué payé' : '🔴 Marqué impayé');
 }
 
 function addAchat(chId) {
