@@ -682,6 +682,7 @@
     <button class="gs-btn-secondary" id="gs-sync-all-btn" style="display:none;" onclick="googleSyncAllChantiers()">🔄 Synchroniser tous les chantiers</button>
     <button class="gs-btn-secondary" id="gs-force-push-btn" style="display:none;" onclick="googleForcePush()">🚀 Envoyer mes données → Drive</button>
     <button class="gs-btn-secondary" id="gs-force-pull-btn" style="display:none;" onclick="googleForcePull()">📥 Charger depuis Drive →</button>
+    <select id="gs-calendar-select" style="display:none;margin-left:8px;padding:6px 8px;border-radius:6px;border:1px solid #ccc;font-size:13px;" onchange="googleSelectCalendar(this.value)" title="Choisir l'agenda Google à utiliser pour les chantiers"></select>
   </div>
 </header>
 
@@ -6836,7 +6837,7 @@ async function fetchTodayCalendarEvents(force) {
   if (typeof googleIsConnected !== 'function' || !googleIsConnected()) return null;
   const start = new Date(); start.setHours(0,0,0,0);
   const end = new Date(); end.setHours(23,59,59,999);
-  const url = 'https://www.googleapis.com/calendar/v3/calendars/primary/events'
+  const url = 'https://www.googleapis.com/calendar/v3/calendars/' + getGoogleCalendarId() + '/events'
     + '?timeMin=' + encodeURIComponent(start.toISOString())
     + '&timeMax=' + encodeURIComponent(end.toISOString())
     + '&singleEvents=true&orderBy=startTime&maxResults=30';
@@ -7865,6 +7866,50 @@ function googleIsConnected() {
   return exp > Date.now() + 5000;
 }
 
+// Renvoie l'ID de l'agenda Google sélectionné par Alex (ou primary par défaut)
+function getGoogleCalendarId() {
+  return encodeURIComponent((data && data.googleCalendarId) || 'primary');
+}
+
+// Charge la liste des agendas du compte Google et populate le selecteur
+async function googleLoadCalendarsList() {
+  if (!googleIsConnected()) return;
+  try {
+    const r = await googleApi('https://www.googleapis.com/calendar/v3/users/me/calendarList?minAccessRole=writer');
+    if (!r.ok) return;
+    const j = await r.json();
+    const items = (j.items || []).filter(c => !c.hidden);
+    const sel = document.getElementById('gs-calendar-select');
+    if (!sel) return;
+    sel.innerHTML = '';
+    const currentId = (data && data.googleCalendarId) || 'primary';
+    items.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = '📅 ' + (c.summary || c.id) + (c.primary ? ' (principal)' : '');
+      if (c.id === currentId || (c.primary && currentId === 'primary')) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    sel.style.display = 'inline-block';
+    // Si Alex n'a jamais choisi → garder primary par défaut
+    if (!data.googleCalendarId) {
+      const primary = items.find(c => c.primary);
+      if (primary) data.googleCalendarId = 'primary';
+    }
+  } catch(e) { console.warn('Cannot load calendar list', e); }
+}
+
+function googleSelectCalendar(calId) {
+  if (!calId) return;
+  data.googleCalendarId = calId;
+  saveData();
+  toast('📅 Agenda sélectionné');
+  // Rafraîchir l'encart "aujourd'hui" pour que ça utilise le nouvel agenda
+  if (typeof renderTodayAgenda === 'function') {
+    setTimeout(() => { _todayAgendaCache = { events: null, fetchedAt: 0 }; renderTodayAgenda(); }, 200);
+  }
+}
+
 function googleSetStatus(msg, color) {
   const el = document.getElementById('gs-status');
   if (!el) return;
@@ -7880,6 +7925,7 @@ function googleUpdateUI() {
   if (!info) return;
   const btnForcePush = document.getElementById('gs-force-push-btn');
   const btnForcePull = document.getElementById('gs-force-pull-btn');
+  const calSelect = document.getElementById('gs-calendar-select');
   if (googleIsConnected()) {
     const shortMail = googleUserEmail ? (googleUserEmail.length > 25 ? googleUserEmail.slice(0,22) + '...' : googleUserEmail) : 'connecté';
     info.textContent = '✅ Synchronisé · ' + shortMail;
@@ -7888,6 +7934,12 @@ function googleUpdateUI() {
     btnSyncAll.style.display = 'inline-block';
     if (btnForcePush) btnForcePush.style.display = 'inline-block';
     if (btnForcePull) btnForcePull.style.display = 'inline-block';
+    // Charge la liste des agendas si pas encore fait
+    if (calSelect && calSelect.options.length === 0) {
+      setTimeout(() => googleLoadCalendarsList(), 300);
+    } else if (calSelect) {
+      calSelect.style.display = 'inline-block';
+    }
   } else {
     info.textContent = '🔌 Google : déconnecté';
     btnConnect.style.display = 'inline-block';
@@ -7895,6 +7947,7 @@ function googleUpdateUI() {
     btnSyncAll.style.display = 'none';
     if (btnForcePush) btnForcePush.style.display = 'none';
     if (btnForcePull) btnForcePull.style.display = 'none';
+    if (calSelect) calSelect.style.display = 'none';
   }
 }
 
@@ -8276,7 +8329,7 @@ async function googleSyncChantierEvent(ch) {
     const event = googleBuildEventForChantier(ch);
     if (ch.googleEventId) {
       // Update
-      const r = await googleApi('https://www.googleapis.com/calendar/v3/calendars/primary/events/' + encodeURIComponent(ch.googleEventId), {
+      const r = await googleApi('https://www.googleapis.com/calendar/v3/calendars/' + getGoogleCalendarId() + '/events/' + encodeURIComponent(ch.googleEventId), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(event)
@@ -8289,7 +8342,7 @@ async function googleSyncChantierEvent(ch) {
       if (!r.ok) throw new Error('Calendar update failed: ' + r.status);
     } else {
       // Create
-      const r = await googleApi('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+      const r = await googleApi('https://www.googleapis.com/calendar/v3/calendars/' + getGoogleCalendarId() + '/events', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(event)
@@ -8307,7 +8360,7 @@ async function googleSyncChantierEvent(ch) {
 async function googleDeleteChantierEvent(eventId) {
   if (!googleIsConnected() || !eventId) return;
   try {
-    await googleApi('https://www.googleapis.com/calendar/v3/calendars/primary/events/' + encodeURIComponent(eventId), {
+    await googleApi('https://www.googleapis.com/calendar/v3/calendars/' + getGoogleCalendarId() + '/events/' + encodeURIComponent(eventId), {
       method: 'DELETE'
     });
   } catch(e) { console.warn('Calendar delete error', e); }
@@ -8333,9 +8386,11 @@ async function googleSyncAllChantiers() {
 function googleOnLoginSuccess() {
   // 1) Pull Drive si plus récent, sinon push
   googleDrivePullIfNewer();
-  // 2) Rafraîchir l'agenda du jour si on est sur l'onglet Chantiers
+  // 2) Charger la liste des agendas Google pour le selecteur
+  setTimeout(() => googleLoadCalendarsList(), 300);
+  // 3) Rafraîchir l'agenda du jour si on est sur l'onglet Chantiers
   if (currentPage === 'chantiers' && typeof renderTodayAgenda === 'function') {
-    setTimeout(() => renderTodayAgenda(true), 600);
+    setTimeout(() => renderTodayAgenda(true), 800);
   }
 }
 
