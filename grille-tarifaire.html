@@ -666,6 +666,7 @@
     <button class="tab" data-page="chantiers" onclick="showPage('chantiers')">Chantiers</button>
     <button class="tab" data-page="compta" onclick="showPage('compta')">Comptabilité</button>
     <button class="tab" data-page="gravier" onclick="showPage('gravier')">Gravier</button>
+    <button class="tab" data-page="marketing" onclick="showPage('marketing')">📣 Marketing</button>
     <button class="tab" data-page="assistant" onclick="showPage('assistant')">Assistant IA</button>
   </div>
   <div style="margin-top:8px;">
@@ -1128,6 +1129,15 @@
       </div>
     </div>
 
+    <!-- Aujourd'hui dans ton agenda Google -->
+    <div class="card" id="today-agenda-card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:6px;">
+        <h3 style="margin:0;">📅 Aujourd'hui dans ton agenda</h3>
+        <button class="btn-secondary btn-small" onclick="renderTodayAgenda(true)">🔄 Rafraîchir</button>
+      </div>
+      <div id="today-agenda-content"></div>
+    </div>
+
     <!-- Récap semaine -->
     <div class="card" id="recap-semaine-card">
       <div id="recap-semaine-content"></div>
@@ -1417,6 +1427,13 @@ const DEFAULT_DATA = {
   stock: [],
   achats: [],
   companyInfo: { name: "E.I Alex'terieur", address: "", phone: "", email: "", siret: "" },
+  marketing: {
+    gbpUrl: '',
+    gbpReviewUrl: '',
+    gbpReviewCount: 0,
+    gbpRating: 0,
+    weeklyTasksDone: {}
+  },
   comptabilite: {
     joursMois: 20,
     objectifJour: 400,
@@ -1516,7 +1533,32 @@ function loadData() {
         if (!ch.soustraitants) ch.soustraitants = [];
         // Migration silencieuse v20 : Google Calendar event id
         if (ch.googleEventId === undefined) ch.googleEventId = null;
+        // Migration silencieuse v23 : marketing (date de cloture + demande d'avis)
+        if (ch.clotureDate === undefined) ch.clotureDate = null;
+        if (ch.reviewRequest === undefined) ch.reviewRequest = null;
+        // Photos : ajouter publishedAt
+        if (Array.isArray(ch.photos)) {
+          ch.photos.forEach(ph => {
+            if (ph && ph.publishedAt === undefined) ph.publishedAt = null;
+          });
+        }
       });
+      // Migration silencieuse v23 : data.marketing
+      if (!parsed.marketing) {
+        parsed.marketing = {
+          gbpUrl: '',
+          gbpReviewUrl: '',
+          gbpReviewCount: 0,
+          gbpRating: 0,
+          weeklyTasksDone: {}
+        };
+      } else {
+        if (parsed.marketing.gbpUrl === undefined) parsed.marketing.gbpUrl = '';
+        if (parsed.marketing.gbpReviewUrl === undefined) parsed.marketing.gbpReviewUrl = '';
+        if (parsed.marketing.gbpReviewCount === undefined) parsed.marketing.gbpReviewCount = 0;
+        if (parsed.marketing.gbpRating === undefined) parsed.marketing.gbpRating = 0;
+        if (!parsed.marketing.weeklyTasksDone) parsed.marketing.weeklyTasksDone = {};
+      }
       // Migration silencieuse v20 : timestamp pour sync Drive
       if (!parsed._lastModified) parsed._lastModified = Date.now();
       return parsed;
@@ -1559,6 +1601,7 @@ function showPage(page) {
   if (page === 'compta') renderComptaPage();
   if (page === 'stock') renderStockPage();
   if (page === 'achats') renderAchatsPage();
+  if (page === 'marketing') renderMarketingPage();
 }
 
 function setPriceMode(mode) {
@@ -2000,6 +2043,7 @@ function renderChantiers() {
     if (btn) btn.style.fontWeight = (chantierStatutFilter === (k === 'all' ? '' : k)) ? '700' : '400';
   });
 
+  renderTodayAgenda();
   renderRecapSemaine();
 
   if (data.chantiers.length === 0) {
@@ -6175,6 +6219,7 @@ function updateChantierField(chId, field, val) {
         }
         const movements = closureDecrementStock(ch);
         ch[field] = val;
+        ch.clotureDate = Date.now();
         saveData();
         renderChantierDetail(ch);
         renderChantiers();
@@ -6203,6 +6248,12 @@ function updateChantierField(chId, field, val) {
       if (restored > 0) {
         toast(`Stock restaure : ${restored} article(s) remis en depot`);
       }
+      // Réinitialiser la date de cloture
+      ch.clotureDate = null;
+    }
+    // Marquer date de cloture
+    if (nouveau === 'cloture' && ancien !== 'cloture') {
+      ch.clotureDate = Date.now();
     }
   }
 
@@ -6766,6 +6817,256 @@ function renderRecapSemaine() {
       </div>
     </div>
   `;
+}
+
+/* ============ AGENDA GOOGLE DU JOUR ============ */
+
+let _todayAgendaCache = { events: null, fetchedAt: 0 };
+const TODAY_AGENDA_CACHE_MS = 5 * 60 * 1000; // 5 minutes
+let _todayAgendaTickInterval = null;
+
+async function fetchTodayCalendarEvents(force) {
+  if (!force && _todayAgendaCache.events && (Date.now() - _todayAgendaCache.fetchedAt) < TODAY_AGENDA_CACHE_MS) {
+    return _todayAgendaCache.events;
+  }
+  if (typeof googleIsConnected !== 'function' || !googleIsConnected()) return null;
+  const start = new Date(); start.setHours(0,0,0,0);
+  const end = new Date(); end.setHours(23,59,59,999);
+  const url = 'https://www.googleapis.com/calendar/v3/calendars/primary/events'
+    + '?timeMin=' + encodeURIComponent(start.toISOString())
+    + '&timeMax=' + encodeURIComponent(end.toISOString())
+    + '&singleEvents=true&orderBy=startTime&maxResults=30';
+  try {
+    const r = await googleApi(url);
+    if (!r.ok) throw new Error('Calendar list failed: ' + r.status);
+    const j = await r.json();
+    const items = (j.items || []).filter(ev => {
+      // Exclure anniversaires Google
+      if (ev.eventType === 'birthday') return false;
+      if (ev.summary && /^Anniversaire/i.test(ev.summary)) return false;
+      // Exclure les événements déclinés
+      const me = (ev.attendees || []).find(a => a.self);
+      if (me && me.responseStatus === 'declined') return false;
+      return true;
+    });
+    _todayAgendaCache = { events: items, fetchedAt: Date.now() };
+    return items;
+  } catch(e) {
+    console.warn('fetchTodayCalendarEvents error', e);
+    return null;
+  }
+}
+
+function classifyAgendaEvent(ev) {
+  const title = (ev.summary || '').trim();
+  const lower = title.toLowerCase();
+  // 1) BABAD
+  if (/babad/i.test(title)) return { type: 'babad', label: 'BABAD', color: '#2980b9' };
+  // 2) Match avec un chantier existant (par googleEventId, puis par titre/client)
+  let chantier = (data.chantiers || []).find(c => c.googleEventId && c.googleEventId === ev.id);
+  if (!chantier) {
+    chantier = (data.chantiers || []).find(c => {
+      if (!c || c.statut === 'cloture') return false;
+      const cName = (c.client || '').toLowerCase().trim();
+      if (!cName) return false;
+      // Le titre Calendar est "Chantier <client>" → match si ça contient le nom client
+      return lower.includes(cName);
+    });
+  }
+  if (chantier) return { type: 'chantier', label: 'Perso', color: '#3d6f28', chantierId: chantier.id };
+  // 3) Sinon : à créer
+  return { type: 'autre', label: 'Autre', color: '#888' };
+}
+
+function getEventTimeRange(ev) {
+  if (ev.start && ev.start.date) {
+    return 'Toute la journée';
+  }
+  const startStr = ev.start && ev.start.dateTime ? new Date(ev.start.dateTime).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '';
+  const endStr = ev.end && ev.end.dateTime ? new Date(ev.end.dateTime).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '';
+  if (startStr && endStr) return startStr + ' → ' + endStr;
+  return startStr || '?';
+}
+
+function findActiveChantierForEvent(eventId) {
+  return (data.chantiers || []).find(ch =>
+    ch.activeSession &&
+    ((ch.googleEventId && ch.googleEventId === eventId)
+      || (ch.activeSession.googleEventId && ch.activeSession.googleEventId === eventId))
+  );
+}
+
+function startTimerFromGoogleEvent(eventId, eventTitle, eventType) {
+  const events = (_todayAgendaCache.events || []);
+  const ev = events.find(e => e.id === eventId);
+  const title = eventTitle || (ev && ev.summary) || 'Événement';
+  // Vérifier qu'aucun timer n'est déjà actif
+  const otherActive = (data.chantiers || []).find(ch => ch.activeSession);
+  if (otherActive) {
+    const nom = data.clients.find(c => c.id === otherActive.clientId)?.name || otherActive.client || '?';
+    if (!confirm('Un timer est déjà en cours sur "' + nom + '". L\'arrêter et démarrer celui-ci ?')) return;
+    timerStopSession(otherActive.id);
+  }
+  let chantier = null;
+  // 1) match par googleEventId
+  chantier = (data.chantiers || []).find(c => c.googleEventId === eventId);
+  // 2) classification si pas trouvé
+  if (!chantier) {
+    const cls = ev ? classifyAgendaEvent(ev) : { type: eventType };
+    if (cls.type === 'chantier' && cls.chantierId) {
+      chantier = data.chantiers.find(c => c.id === cls.chantierId);
+      // Lier l'event au chantier pour la prochaine fois
+      if (chantier && !chantier.googleEventId) chantier.googleEventId = eventId;
+    } else {
+      // Créer un nouveau chantier
+      const today = new Date().toISOString().slice(0,10);
+      const isBabad = /babad/i.test(title);
+      const clientName = isBabad ? 'BABAD' : title;
+      // Trouver/créer client
+      let clientRec = data.clients.find(c => c.name.toLowerCase() === clientName.toLowerCase());
+      if (!clientRec) {
+        clientRec = {
+          id: 'cl_' + Date.now() + '_' + Math.random().toString(36).slice(2,6),
+          name: clientName, address: (ev && ev.location) || '', phone: '', email: '', notes: '',
+          createdAt: new Date().toISOString()
+        };
+        data.clients.push(clientRec);
+      }
+      chantier = {
+        id: 'ch_' + Date.now(),
+        client: clientName,
+        clientId: clientRec.id,
+        date: today,
+        adresse: (ev && ev.location) || '',
+        type: isBabad ? 'babad' : 'perso',
+        statut: 'en_cours',
+        montantHT: 0,
+        hours: 0,
+        materialCost: 0,
+        materielLibre: '',
+        notes: 'Créé depuis Google Agenda · ' + title,
+        prestations: [],
+        achats: [],
+        photos: [],
+        stockConsume: [],
+        sessions: [],
+        activeSession: null,
+        soustraitants: [],
+        googleEventId: eventId
+      };
+      data.chantiers.push(chantier);
+    }
+  }
+  if (!chantier) { toast('Erreur : chantier introuvable'); return; }
+  // Démarrer le timer
+  if (chantier.activeSession) { toast('Timer déjà en cours sur ce chantier'); return; }
+  chantier.activeSession = {
+    start: new Date().toISOString(),
+    pauses: [],
+    googleEventId: eventId,
+    eventTitle: title
+  };
+  saveData();
+  startTimerTick(chantier.id);
+  renderChantiers();
+  toast('▶️ Timer démarré · ' + title);
+}
+
+function stopTimerFromGoogleEvent(eventId) {
+  const ch = findActiveChantierForEvent(eventId);
+  if (!ch) { toast('Aucun timer actif sur cet événement'); return; }
+  const eventTitle = (ch.activeSession && ch.activeSession.eventTitle) || ch.client || '?';
+  const startMs = new Date(ch.activeSession.start).getTime();
+  const durH = Math.round(((Date.now() - startMs) / 3600000) * 100) / 100;
+  timerStopSession(ch.id);
+  toast('✅ Timer arrêté · ' + durH + 'h sur ' + eventTitle);
+}
+
+function renderTodayAgendaEventCard(ev) {
+  const cls = classifyAgendaEvent(ev);
+  const timeRange = getEventTimeRange(ev);
+  const title = escapeHtml(ev.summary || '(Sans titre)');
+  const activeCh = findActiveChantierForEvent(ev.id);
+  const isActive = !!activeCh;
+
+  const badgeBg = cls.type === 'babad' ? '#e8f1f9' : cls.type === 'chantier' ? '#eaf4e3' : '#f0f0f0';
+  const badgeColor = cls.color;
+
+  // Encode pour passage sûr dans onclick (HTML attribute)
+  const safeId = String(ev.id).replace(/'/g, "\\'");
+
+  let actionBtn = '';
+  if (isActive) {
+    actionBtn = `
+      <span style="font-weight:600; color:#27ae60; font-size:13px;" id="agenda-timer-live-${safeId}">${formatTimerLive(activeCh.activeSession)}</span>
+      <button class="btn-danger btn-small" onclick="stopTimerFromGoogleEvent('${safeId}')">⏹️ Arrêter</button>
+    `;
+  } else if (cls.type === 'babad') {
+    actionBtn = `<button class="btn-add btn-small" onclick="startTimerFromGoogleEvent('${safeId}', null, 'babad')">▶️ Démarrer journée BABAD</button>`;
+  } else if (cls.type === 'chantier') {
+    actionBtn = `<button class="btn-add btn-small" onclick="startTimerFromGoogleEvent('${safeId}', null, 'chantier')">▶️ Démarrer timer du chantier</button>`;
+  } else {
+    actionBtn = `<button class="btn-add btn-small" onclick="startTimerFromGoogleEvent('${safeId}', null, 'autre')">▶️ Démarrer timer (créer chantier)</button>`;
+  }
+
+  const highlight = isActive ? 'border:2px solid #2ecc71; background:#f4faf0;' : 'border:1px solid #e0e0e0; background:#fff;';
+  const location = ev.location ? `<div style="font-size:11px; color:#888; margin-top:2px;">📍 ${escapeHtml(ev.location)}</div>` : '';
+
+  return `
+    <div style="${highlight} border-radius:8px; padding:10px 12px; margin-bottom:8px;">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; flex-wrap:wrap;">
+        <div style="flex:1; min-width:0;">
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:3px;">
+            <span style="font-size:10px; font-weight:700; padding:2px 8px; border-radius:10px; background:${badgeBg}; color:${badgeColor}; text-transform:uppercase;">${cls.label}</span>
+            <span style="font-weight:600; color:#222;">${title}</span>
+          </div>
+          <div style="font-size:12px; color:#666;">⏰ ${timeRange}</div>
+          ${location}
+        </div>
+        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+          ${actionBtn}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function renderTodayAgenda(force) {
+  const el = document.getElementById('today-agenda-content');
+  if (!el) return;
+  if (typeof googleIsConnected !== 'function' || !googleIsConnected()) {
+    el.innerHTML = `<div style="color:#888; font-size:13px; padding:8px 0;">🔌 Connecte Google (en haut de l'app) pour voir tes events du jour.</div>`;
+    return;
+  }
+  el.innerHTML = `<div style="color:#888; font-size:13px; padding:8px 0;">🔄 Chargement de l'agenda…</div>`;
+  const events = await fetchTodayCalendarEvents(force === true);
+  if (events === null) {
+    el.innerHTML = `<div style="color:#e67e22; font-size:13px; padding:8px 0;">⚠️ Impossible de charger l'agenda. Réessaie.</div>`;
+    return;
+  }
+  if (events.length === 0) {
+    el.innerHTML = `<div style="color:#888; font-size:13px; padding:8px 0;">✨ Rien dans ton agenda aujourd'hui.</div>`;
+    return;
+  }
+  el.innerHTML = events.map(renderTodayAgendaEventCard).join('');
+  // Tick live pour les events avec timer actif (1s)
+  startTodayAgendaTick();
+}
+
+function startTodayAgendaTick() {
+  if (_todayAgendaTickInterval) { clearInterval(_todayAgendaTickInterval); _todayAgendaTickInterval = null; }
+  _todayAgendaTickInterval = setInterval(() => {
+    const events = (_todayAgendaCache.events || []);
+    let stillActive = false;
+    events.forEach(ev => {
+      const ch = findActiveChantierForEvent(ev.id);
+      if (!ch) return;
+      stillActive = true;
+      const liveEl = document.getElementById('agenda-timer-live-' + ev.id);
+      if (liveEl) liveEl.textContent = formatTimerLive(ch.activeSession);
+    });
+    if (!stillActive) { clearInterval(_todayAgendaTickInterval); _todayAgendaTickInterval = null; }
+  }, 1000);
 }
 
 /* ============ STOCK — LIAISON CHANTIER ============ */
@@ -8028,6 +8329,10 @@ async function googleSyncAllChantiers() {
 function googleOnLoginSuccess() {
   // 1) Pull Drive si plus récent, sinon push
   googleDrivePullIfNewer();
+  // 2) Rafraîchir l'agenda du jour si on est sur l'onglet Chantiers
+  if (currentPage === 'chantiers' && typeof renderTodayAgenda === 'function') {
+    setTimeout(() => renderTodayAgenda(true), 600);
+  }
 }
 
 /* -------- INIT -------- */
