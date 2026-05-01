@@ -1266,6 +1266,7 @@
         <button class="btn-secondary btn-small" onclick="setChantierFilter('en_cours')" id="cf-en_cours">En cours</button>
         <button class="btn-secondary btn-small" onclick="setChantierFilter('cloture')" id="cf-cloture">Clôturés</button>
         <button class="btn-secondary btn-small" onclick="setChantierFilterImpayes()" id="cf-impayes">Impayés</button>
+        <button class="btn-secondary btn-small" onclick="openChantierDedupModal()" id="cf-fusion" title="Détecter et fusionner les chantiers en doublon">🧹 Fusionner doublons</button>
       </div>
       <div id="chantiers-summary" style="margin-bottom:8px;"></div>
       <div id="chantiers-list"></div>
@@ -1365,6 +1366,31 @@
           <button class="btn-secondary" onclick="closeModalAddChantier()">Annuler</button>
           <button class="btn-add" onclick="saveChantierFromModal()">Enregistrer le chantier</button>
         </div>
+      </div>
+    </div>
+
+    <!-- Modal confirmation doublon chantier -->
+    <div id="modal-chantier-doublon" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:2200; justify-content:center; align-items:center; padding:20px;">
+      <div style="background:#fff; border-radius:12px; padding:22px; max-width:520px; width:94%; box-shadow:0 8px 32px rgba(0,0,0,0.22);">
+        <h3 style="margin:0 0 10px; color:#b8841c;">⚠️ Chantier en doublon ?</h3>
+        <div id="modal-chantier-doublon-body"></div>
+        <div style="display:flex; gap:8px; margin-top:8px; justify-content:flex-end; flex-wrap:wrap;">
+          <button class="btn-secondary btn-small" onclick="chantierDoublonChoice('cancel')">❌ Annuler</button>
+          <button class="btn-secondary btn-small" onclick="chantierDoublonChoice('create')">➕ Créer nouveau</button>
+          <button class="btn-add btn-small" onclick="chantierDoublonChoice('merge')">🔄 Mettre à jour l'existant</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal fusion manuelle des doublons -->
+    <div id="modal-fusion-chantiers" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:2100; justify-content:center; align-items:flex-start; padding-top:40px; overflow-y:auto;">
+      <div style="background:#fff; border-radius:12px; padding:22px; max-width:640px; width:94%; box-shadow:0 8px 32px rgba(0,0,0,0.2); margin-bottom:40px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+          <h3 style="margin:0; color:#3d6f28;">🧹 Fusionner les chantiers en doublon</h3>
+          <button class="btn-secondary btn-small" onclick="closeChantierDedupModal()">Fermer</button>
+        </div>
+        <p style="margin:0 0 14px; font-size:13px; color:#666;">Voici les groupes détectés (même client, statut non clôturé, dates dans les 30 jours).</p>
+        <div id="modal-fusion-chantiers-body"></div>
       </div>
     </div>
 
@@ -2407,6 +2433,291 @@ function renderPrestaLines() {
   `).join('');
 }
 
+/* ============ DÉDUPLICATION DE CHANTIERS ============ */
+
+// Normalise un nom client pour comparaison tolérante
+function _normalizeClientName(s) {
+  return (s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+// Cherche un chantier candidat à fusion avec les critères :
+// - même clientId (ou même nom client normalisé) en excluant `excludeId`
+// - statut différent de `cloture`
+// - date à ± `windowDays` jours du nouveau (par défaut 7)
+function findDuplicateChantier(newCh, windowDays) {
+  if (!newCh) return null;
+  const win = (windowDays || 7) * 86400000;
+  const newDate = newCh.date ? new Date(newCh.date + 'T00:00:00').getTime() : NaN;
+  const newName = _normalizeClientName(newCh.client || (data.clients.find(c => c.id === newCh.clientId)?.name));
+  const list = data.chantiers || [];
+  for (const ch of list) {
+    if (newCh.id && ch.id === newCh.id) continue;
+    if ((ch.statut || 'en_cours') === 'cloture') continue;
+    const sameClient = (newCh.clientId && ch.clientId && newCh.clientId === ch.clientId)
+      || (newName && _normalizeClientName(ch.client || (data.clients.find(c => c.id === ch.clientId)?.name)) === newName);
+    if (!sameClient) continue;
+    // Si pas de date sur le nouveau ou l'existant, on considère un match potentiel
+    if (isNaN(newDate) || !ch.date) return ch;
+    const chDate = new Date(ch.date + 'T00:00:00').getTime();
+    if (isNaN(chDate)) return ch;
+    if (Math.abs(chDate - newDate) <= win) return ch;
+  }
+  return null;
+}
+
+// Détecte tous les groupes de doublons dans data.chantiers (statut non clôturé, fenêtre 30j)
+function detectAllChantierDuplicates(windowDays) {
+  const win = (windowDays || 30) * 86400000;
+  const list = (data.chantiers || []).filter(ch => (ch.statut || 'en_cours') !== 'cloture');
+  const groups = [];
+  const used = new Set();
+  for (let i = 0; i < list.length; i++) {
+    if (used.has(list[i].id)) continue;
+    const a = list[i];
+    const aName = _normalizeClientName(a.client || (data.clients.find(c => c.id === a.clientId)?.name));
+    if (!aName && !a.clientId) continue;
+    const aDate = a.date ? new Date(a.date + 'T00:00:00').getTime() : NaN;
+    const group = [a];
+    for (let j = i + 1; j < list.length; j++) {
+      if (used.has(list[j].id)) continue;
+      const b = list[j];
+      const bName = _normalizeClientName(b.client || (data.clients.find(c => c.id === b.clientId)?.name));
+      const sameClient = (a.clientId && b.clientId && a.clientId === b.clientId)
+        || (aName && bName && aName === bName);
+      if (!sameClient) continue;
+      const bDate = b.date ? new Date(b.date + 'T00:00:00').getTime() : NaN;
+      if (isNaN(aDate) || isNaN(bDate) || Math.abs(aDate - bDate) <= win) {
+        group.push(b);
+      }
+    }
+    if (group.length >= 2) {
+      group.forEach(g => used.add(g.id));
+      groups.push(group);
+    }
+  }
+  return groups;
+}
+
+// Score de "complétude" d'un chantier (plus c'est haut, plus il a d'infos)
+function _chantierCompletenessScore(ch) {
+  let s = 0;
+  if (ch.montantHT && ch.montantHT > 0) s += 10;
+  if (ch.devisId) s += 8;
+  if (ch.adresse) s += 3;
+  if (ch.notes) s += 2;
+  if (ch.hours && ch.hours > 0) s += 5;
+  if (ch.materialCost && ch.materialCost > 0) s += 3;
+  if (ch.prestations && ch.prestations.length) s += ch.prestations.length;
+  if (ch.achats && ch.achats.length) s += ch.achats.length * 2;
+  if (ch.photos && ch.photos.length) s += ch.photos.length;
+  if (ch.sessions && ch.sessions.length) s += ch.sessions.length * 4;
+  if (ch.userSessions && ch.userSessions.length) s += ch.userSessions.length * 4;
+  if (ch.googleEventId) s += 2;
+  if ((ch.statut || '') === 'en_cours') s += 4;
+  return s;
+}
+
+// Enrichit `target` avec les champs non vides de `source` (jamais d'écrasement non vide)
+function _mergeChantierInto(target, source) {
+  const fillIfEmpty = (key) => {
+    if ((target[key] === undefined || target[key] === null || target[key] === '' || target[key] === 0) && source[key]) {
+      target[key] = source[key];
+    }
+  };
+  ['adresse','date','dateFin','client','clientId','devisId','type','statut',
+   'materielLibre','notes','googleEventId'].forEach(fillIfEmpty);
+  // Numériques : prendre le max
+  ['montantHT','hours','materialCost'].forEach(k => {
+    const sv = source[k] || 0;
+    const tv = target[k] || 0;
+    if (sv > tv) target[k] = sv;
+  });
+  // Listes : concaténer
+  ['prestations','achats','photos','stockConsume','sessions','userSessions','soustraitants'].forEach(k => {
+    if (Array.isArray(source[k]) && source[k].length) {
+      if (!Array.isArray(target[k])) target[k] = [];
+      target[k] = target[k].concat(source[k]);
+    }
+  });
+  // Trace
+  if (!Array.isArray(target._mergedFrom)) target._mergedFrom = [];
+  if (source.id) target._mergedFrom.push({ id: source.id, mergedAt: new Date().toISOString() });
+}
+
+// Variable temporaire pour la confirmation modale
+let _pendingDuplicateContext = null;
+
+// Affiche la modal de confirmation et retourne via callback
+function showChantierDuplicateModal(newCh, existingCh, onChoice) {
+  _pendingDuplicateContext = { newCh, existingCh, onChoice };
+  const modal = document.getElementById('modal-chantier-doublon');
+  const body = document.getElementById('modal-chantier-doublon-body');
+  if (!modal || !body) {
+    // Fallback : confirm natif si modal indisponible
+    const ok = confirm('Un chantier existe déjà pour ce client (' + (existingCh.date || '?') + ').\n\nOK = Mettre à jour l\'existant\nAnnuler = Créer un nouveau chantier');
+    onChoice(ok ? 'merge' : 'create');
+    _pendingDuplicateContext = null;
+    return;
+  }
+  const clientName = existingCh.client || (data.clients.find(c => c.id === existingCh.clientId)?.name) || '?';
+  const existingDate = existingCh.date || '?';
+  const existingMontant = existingCh.montantHT ? existingCh.montantHT.toFixed(2) + '€' : '—';
+  const newDate = newCh.date || '?';
+  const newMontant = newCh.montantHT ? newCh.montantHT.toFixed(2) + '€' : '—';
+  body.innerHTML = `
+    <p style="margin:0 0 12px; color:#444;">Un chantier existe déjà pour <strong>${escapeHtml(clientName)}</strong>.</p>
+    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
+      <div style="flex:1; min-width:180px; background:#f7faf3; border:1px solid #cfe5b8; border-radius:8px; padding:10px;">
+        <div style="font-size:11px; color:#5ba241; font-weight:700; margin-bottom:4px;">EXISTANT</div>
+        <div style="font-size:13px;"><strong>📅 ${escapeHtml(existingDate)}</strong></div>
+        <div style="font-size:12px; color:#555;">Statut : ${escapeHtml(existingCh.statut || 'en_cours')}</div>
+        <div style="font-size:12px; color:#555;">Montant : ${escapeHtml(existingMontant)}</div>
+      </div>
+      <div style="flex:1; min-width:180px; background:#fff8e7; border:1px solid #f0c97a; border-radius:8px; padding:10px;">
+        <div style="font-size:11px; color:#b8841c; font-weight:700; margin-bottom:4px;">NOUVEAU</div>
+        <div style="font-size:13px;"><strong>📅 ${escapeHtml(newDate)}</strong></div>
+        <div style="font-size:12px; color:#555;">Statut : ${escapeHtml(newCh.statut || 'planifie')}</div>
+        <div style="font-size:12px; color:#555;">Montant : ${escapeHtml(newMontant)}</div>
+      </div>
+    </div>
+    <p style="margin:0 0 6px; color:#666; font-size:13px;">Que veux-tu faire ?</p>
+  `;
+  modal.style.display = 'flex';
+}
+
+function chantierDoublonChoice(choice) {
+  const ctx = _pendingDuplicateContext;
+  const modal = document.getElementById('modal-chantier-doublon');
+  if (modal) modal.style.display = 'none';
+  _pendingDuplicateContext = null;
+  if (ctx && typeof ctx.onChoice === 'function') ctx.onChoice(choice);
+}
+
+// Wrapper : tente de créer un chantier ; détecte doublon ; appelle onCreate(finalChantier, mode)
+// modes possibles : 'created' (nouveau), 'merged' (fusion dans existant), 'cancelled'
+function createChantierWithDedup(newCh, onResult) {
+  const existing = findDuplicateChantier(newCh, 7);
+  if (!existing) {
+    data.chantiers.push(newCh);
+    saveData();
+    onResult && onResult({ chantier: newCh, mode: 'created' });
+    return;
+  }
+  showChantierDuplicateModal(newCh, existing, (choice) => {
+    if (choice === 'merge') {
+      _mergeChantierInto(existing, newCh);
+      saveData();
+      onResult && onResult({ chantier: existing, mode: 'merged' });
+    } else if (choice === 'create') {
+      newCh.notes = (newCh.notes ? newCh.notes + '\n' : '') + '⚠️ Doublon volontaire (autre chantier existant pour ce client)';
+      data.chantiers.push(newCh);
+      saveData();
+      onResult && onResult({ chantier: newCh, mode: 'created' });
+    } else {
+      onResult && onResult({ chantier: null, mode: 'cancelled' });
+    }
+  });
+}
+
+/* ============ FUSION MANUELLE DES DOUBLONS (bouton) ============ */
+
+function openChantierDedupModal() {
+  const groups = detectAllChantierDuplicates(30);
+  const modal = document.getElementById('modal-fusion-chantiers');
+  const body = document.getElementById('modal-fusion-chantiers-body');
+  if (!modal || !body) return;
+  if (groups.length === 0) {
+    toast('🟩 Aucun doublon détecté');
+    return;
+  }
+  body.innerHTML = groups.map((group, gi) => {
+    const clientName = group[0].client || (data.clients.find(c => c.id === group[0].clientId)?.name) || '?';
+    const linesHtml = group.map(ch => {
+      const stat = ch.statut || 'en_cours';
+      const mt = ch.montantHT ? ch.montantHT.toFixed(2) + '€' : '—';
+      return `<div style="font-size:13px; padding:3px 0;">• <code style="font-size:11px; color:#888;">${escapeHtml(ch.id)}</code> — ${escapeHtml(ch.date || '?')} — ${escapeHtml(stat)} — ${escapeHtml(mt)}</div>`;
+    }).join('');
+    return `
+      <div style="border:1px solid #e0e0e0; border-radius:8px; padding:12px; margin-bottom:12px;">
+        <div style="font-weight:700; color:#3d6f28; margin-bottom:6px;">Groupe ${gi + 1} : ${escapeHtml(clientName)} (${group.length} chantiers)</div>
+        ${linesHtml}
+        <div style="display:flex; gap:8px; margin-top:10px;">
+          <button class="btn-add btn-small" onclick="mergeChantierGroup(${gi})">Fusionner en un seul</button>
+          <button class="btn-secondary btn-small" onclick="dismissChantierGroup(${gi})">Garder séparés</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+  // Stocker temporairement pour les actions
+  window._dedupGroups = groups;
+  modal.style.display = 'flex';
+}
+
+function closeChantierDedupModal() {
+  const modal = document.getElementById('modal-fusion-chantiers');
+  if (modal) modal.style.display = 'none';
+  window._dedupGroups = null;
+}
+
+function mergeChantierGroup(gi) {
+  const groups = window._dedupGroups;
+  if (!groups || !groups[gi]) return;
+  const group = groups[gi];
+  // Choisir le chantier "cible" = celui qui a le plus haut score de complétude
+  let target = group[0];
+  for (const ch of group) {
+    if (_chantierCompletenessScore(ch) > _chantierCompletenessScore(target)) target = ch;
+  }
+  // Fusionner les autres dans target, puis les supprimer
+  const others = group.filter(ch => ch.id !== target.id);
+  others.forEach(src => _mergeChantierInto(target, src));
+  const otherIds = new Set(others.map(c => c.id));
+  data.chantiers = data.chantiers.filter(ch => !otherIds.has(ch.id));
+  saveData();
+  toast(`🟩 ${others.length} chantier(s) fusionné(s) dans #${target.id.slice(0,10)}…`);
+  // Refermer modal et rafraîchir
+  closeChantierDedupModal();
+  if (typeof renderChantiers === 'function') renderChantiers();
+  // Si encore des groupes, ré-ouvrir
+  setTimeout(() => {
+    const remain = detectAllChantierDuplicates(30);
+    if (remain.length > 0) openChantierDedupModal();
+  }, 600);
+}
+
+function dismissChantierGroup(gi) {
+  // Retirer simplement ce groupe de l'affichage (Alex décide de garder séparés)
+  const groups = window._dedupGroups;
+  if (!groups || !groups[gi]) return;
+  groups.splice(gi, 1);
+  if (groups.length === 0) {
+    closeChantierDedupModal();
+    toast('OK · doublons gardés séparés');
+    return;
+  }
+  // Re-render avec les groupes restants
+  const body = document.getElementById('modal-fusion-chantiers-body');
+  if (!body) return;
+  body.innerHTML = groups.map((group, gi2) => {
+    const clientName = group[0].client || (data.clients.find(c => c.id === group[0].clientId)?.name) || '?';
+    const linesHtml = group.map(ch => {
+      const stat = ch.statut || 'en_cours';
+      const mt = ch.montantHT ? ch.montantHT.toFixed(2) + '€' : '—';
+      return `<div style="font-size:13px; padding:3px 0;">• <code style="font-size:11px; color:#888;">${escapeHtml(ch.id)}</code> — ${escapeHtml(ch.date || '?')} — ${escapeHtml(stat)} — ${escapeHtml(mt)}</div>`;
+    }).join('');
+    return `
+      <div style="border:1px solid #e0e0e0; border-radius:8px; padding:12px; margin-bottom:12px;">
+        <div style="font-weight:700; color:#3d6f28; margin-bottom:6px;">Groupe ${gi2 + 1} : ${escapeHtml(clientName)} (${group.length} chantiers)</div>
+        ${linesHtml}
+        <div style="display:flex; gap:8px; margin-top:10px;">
+          <button class="btn-add btn-small" onclick="mergeChantierGroup(${gi2})">Fusionner en un seul</button>
+          <button class="btn-secondary btn-small" onclick="dismissChantierGroup(${gi2})">Garder séparés</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
 function saveChantier() {
   const client = document.getElementById('new-client').value.trim();
   const date = document.getElementById('new-date').value;
@@ -2448,30 +2759,32 @@ function saveChantier() {
     prestations: prestas.map(p => ({ itemId: p.itemId, qty: p.qty })),
     achats: []
   };
-  data.chantiers.push(chantier);
-  saveData();
 
-  // Sync Google Calendar si connecté
-  if (typeof googleSyncChantierEvent === 'function') {
-    try { googleSyncChantierEvent(chantier); } catch(e) { console.warn('Calendar sync error', e); }
-  }
+  createChantierWithDedup(chantier, (res) => {
+    if (res.mode === 'cancelled') return;
 
-  // reset form
-  document.getElementById('new-client').value = '';
-  document.getElementById('new-date').value = '';
-  document.getElementById('new-adresse').value = '';
-  document.getElementById('new-montantHT').value = '';
-  document.getElementById('new-hours').value = '';
-  document.getElementById('new-cost').value = '';
-  document.getElementById('new-materiel-prevu').value = '';
-  document.getElementById('new-notes').value = '';
-  const persoRadio = document.querySelector('input[name="new-type"][value="perso"]');
-  if (persoRadio) persoRadio.checked = true;
-  document.getElementById('new-statut').value = 'planifie';
-  newPrestaLines = [];
-  renderPrestaLines();
-  renderChantiers();
-  toast("Chantier enregistré");
+    // Sync Google Calendar si connecté
+    if (typeof googleSyncChantierEvent === 'function') {
+      try { googleSyncChantierEvent(res.chantier); } catch(e) { console.warn('Calendar sync error', e); }
+    }
+
+    // reset form
+    document.getElementById('new-client').value = '';
+    document.getElementById('new-date').value = '';
+    document.getElementById('new-adresse').value = '';
+    document.getElementById('new-montantHT').value = '';
+    document.getElementById('new-hours').value = '';
+    document.getElementById('new-cost').value = '';
+    document.getElementById('new-materiel-prevu').value = '';
+    document.getElementById('new-notes').value = '';
+    const persoRadio = document.querySelector('input[name="new-type"][value="perso"]');
+    if (persoRadio) persoRadio.checked = true;
+    document.getElementById('new-statut').value = 'planifie';
+    newPrestaLines = [];
+    renderPrestaLines();
+    renderChantiers();
+    toast(res.mode === 'merged' ? '🔄 Chantier mis à jour (fusion)' : 'Chantier enregistré');
+  });
 }
 
 function computeChantierStats(ch) {
@@ -2821,25 +3134,27 @@ function saveChantierFromModal() {
     achats: []
   };
 
-  data.chantiers.push(chantier);
-  saveData();
+  const cidForRefresh = _modalChantierClientId || clientRec.id;
 
-  if (typeof googleSyncChantierEvent === 'function') {
-    try { googleSyncChantierEvent(chantier); } catch(e) { console.warn('Calendar sync error', e); }
-  }
+  createChantierWithDedup(chantier, (res) => {
+    if (res.mode === 'cancelled') return;
 
-  closeModalAddChantier();
-  renderChantiers();
-
-  // Si appelé depuis la fiche client, rafraîchir l'affichage
-  if (_modalChantierClientId || clientRec.id) {
-    const cid = _modalChantierClientId || clientRec.id;
-    if (typeof viewClient === 'function' && document.getElementById('cl-detail') && document.getElementById('cl-detail').style.display !== 'none') {
-      viewClient(cid);
+    if (typeof googleSyncChantierEvent === 'function') {
+      try { googleSyncChantierEvent(res.chantier); } catch(e) { console.warn('Calendar sync error', e); }
     }
-  }
 
-  toast("Chantier enregistré");
+    closeModalAddChantier();
+    renderChantiers();
+
+    // Si appelé depuis la fiche client, rafraîchir l'affichage
+    if (cidForRefresh) {
+      if (typeof viewClient === 'function' && document.getElementById('cl-detail') && document.getElementById('cl-detail').style.display !== 'none') {
+        viewClient(cidForRefresh);
+      }
+    }
+
+    toast(res.mode === 'merged' ? '🔄 Chantier mis à jour (fusion)' : 'Chantier enregistré');
+  });
 }
 
 /* ============ ALERTES CHANTIERS ============ */
@@ -8286,14 +8601,18 @@ function convertGoogleEventToChantier(eventId) {
     soustraitants: [],
     googleEventId: eventId
   };
-  data.chantiers.push(chantier);
-  saveData();
-  toast('🟩 Chantier créé depuis Google · ' + clientName);
-  // Rafraîchit le planning et ouvre le chantier
-  if (typeof renderChantiers === 'function') renderChantiers();
-  setTimeout(() => {
-    if (typeof viewChantier === 'function') viewChantier(chantier.id);
-  }, 80);
+
+  createChantierWithDedup(chantier, (res) => {
+    if (res.mode === 'cancelled') return;
+    toast(res.mode === 'merged'
+      ? '🔄 Event Google fusionné dans le chantier existant · ' + clientName
+      : '🟩 Chantier créé depuis Google · ' + clientName);
+    // Rafraîchit le planning et ouvre le chantier
+    if (typeof renderChantiers === 'function') renderChantiers();
+    setTimeout(() => {
+      if (typeof viewChantier === 'function') viewChantier(res.chantier.id);
+    }, 80);
+  });
 }
 
 async function renderPlanningHebdo(forceRefresh) {
@@ -8301,226 +8620,170 @@ async function renderPlanningHebdo(forceRefresh) {
   if (!el) return;
 
   const { monday, sunday } = getPlanningWeekBounds(_planningWeekOffset);
+  const todayStr = (new Date()).toISOString().slice(0,10);
+  const isCurrentWeek = (_planningWeekOffset === 0);
+  const mondayStr = monday.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  const sundayStr = sunday.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  const googleConnected = (typeof googleIsConnected === 'function' && googleIsConnected());
+  const dayLabels = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+
+  // Helpers de rendu (header commun)
+  const navBtns = `
+    <div style="display:flex; gap:6px; align-items:center;">
+      <button class="btn-secondary btn-small" onclick="planningWeekShift(-1)" title="Semaine précédente">←</button>
+      <button class="btn-secondary btn-small" onclick="planningWeekToday()" style="${isCurrentWeek ? 'opacity:0.5;' : ''}">Aujourd'hui</button>
+      <button class="btn-secondary btn-small" onclick="planningWeekShift(1)" title="Semaine suivante">→</button>
+      <button class="btn-secondary btn-small" onclick="planningRefresh()" title="Rafraîchir Google Agenda">🔄</button>
+    </div>`;
+
+  // ---- Cas 1 : Google non connecté → message clair ----
+  if (!googleConnected) {
+    el.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:6px;">
+        <h3 style="margin:0;">📅 Planning semaine Google Agenda</h3>
+        ${navBtns}
+      </div>
+      <div style="font-size:12px; color:#888; margin-bottom:10px;">${mondayStr} → ${sundayStr}${isCurrentWeek ? ' · cette semaine' : ''}</div>
+      <div style="background:#f7f9f5; border:1px dashed #aaa; border-radius:8px; padding:18px; text-align:center; color:#666;">
+        🔌 Connecte Google pour voir ton planning de la semaine.
+      </div>
+    `;
+    return;
+  }
+
+  // ---- Cas 2 : Google connecté → fetch + affichage ----
+  let googleEvents = [];
+  let googleStatus = 'ok';
+  const cacheKey = monday.toISOString().slice(0,10) + '_' + sunday.toISOString().slice(0,10);
+  const cached = _planningWeekEventsCache[cacheKey];
+  if (cached && !forceRefresh) {
+    googleEvents = cached.events || [];
+  } else {
+    renderPlanningSkeleton(el, monday, sunday, [], [], dayLabels, todayStr, isCurrentWeek, mondayStr, sundayStr, googleConnected, 'loading');
+    const fetched = await fetchWeekCalendarEvents(monday, sunday, forceRefresh === true);
+    if (fetched === null) googleStatus = 'err';
+    else { googleEvents = fetched; googleStatus = 'ok'; }
+    // Si offset a changé pendant le fetch, on annule l'affichage (course condition)
+    const { monday: m2, sunday: s2 } = getPlanningWeekBounds(_planningWeekOffset);
+    if (m2.getTime() !== monday.getTime() || s2.getTime() !== sunday.getTime()) return;
+  }
+
+  // Trier par date début
+  const sortedEvents = (googleEvents || []).slice().sort((a, b) => {
+    const sa = (a.start && a.start.dateTime) || (a.start && a.start.date) || '';
+    const sb = (b.start && b.start.dateTime) || (b.start && b.start.date) || '';
+    return sa.localeCompare(sb);
+  });
+
+  // Statut Google badge
+  let googleBadge = '';
+  if (googleStatus === 'err') {
+    googleBadge = `<span style="font-size:11px; color:#e67e22; padding:2px 6px; background:#fef5e7; border-radius:10px;">⚠️ Google : erreur</span>`;
+  } else {
+    googleBadge = `<span style="font-size:11px; color:#27ae60; padding:2px 6px; background:#eafaf1; border-radius:10px;">✓ Google synchro</span>`;
+  }
+
+  // ---- Construire 7 jours, regrouper events par jour ----
   const days = [];
   for (let i = 0; i < 7; i++) {
     const d = new Date(monday);
     d.setDate(monday.getDate() + i);
     days.push(d);
   }
-  const dayLabels = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
 
-  const chantiers = (data.chantiers || []).filter(ch => {
-    const dates = planningChantierDates(ch);
-    return dates.some(d => d >= monday && d <= sunday);
-  });
+  const formatEventTime = (ev) => {
+    if (ev.start && ev.start.date && !ev.start.dateTime) return 'Toute la journée';
+    const s = ev.start && ev.start.dateTime ? new Date(ev.start.dateTime) : null;
+    const e = ev.end && ev.end.dateTime ? new Date(ev.end.dateTime) : null;
+    const fmt = (d) => d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }).replace(':', 'h');
+    if (s && e) return fmt(s) + '-' + fmt(e);
+    if (s) return fmt(s);
+    return '';
+  };
 
-  const todayStr = (new Date()).toISOString().slice(0,10);
-  const isCurrentWeek = (_planningWeekOffset === 0);
-  const mondayStr = monday.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
-  const sundayStr = sunday.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
-  const googleConnected = (typeof googleIsConnected === 'function' && googleIsConnected());
-
-  // ---- Récupérer events Google de la semaine (filtre déjà ceux liés à un chantier) ----
-  let googleEvents = [];
-  let googleStatus = 'off'; // off | loading | ok | err
-  if (googleConnected) {
-    const cached = _planningWeekEventsCache[monday.toISOString().slice(0,10) + '_' + sunday.toISOString().slice(0,10)];
-    if (cached && !forceRefresh) {
-      googleEvents = cached.events || [];
-      googleStatus = 'ok';
-    } else {
-      // Affichage immédiat avec un placeholder, puis fetch async
-      renderPlanningSkeleton(el, monday, sunday, chantiers, days, dayLabels, todayStr, isCurrentWeek, mondayStr, sundayStr, googleConnected, 'loading');
-      const fetched = await fetchWeekCalendarEvents(monday, sunday, forceRefresh === true);
-      if (fetched === null) googleStatus = 'err';
-      else { googleEvents = fetched; googleStatus = 'ok'; }
-      // Si offset a changé pendant le fetch, on annule l'affichage (course condition)
-      const { monday: m2, sunday: s2 } = getPlanningWeekBounds(_planningWeekOffset);
-      if (m2.getTime() !== monday.getTime() || s2.getTime() !== sunday.getTime()) return;
-    }
-  }
-
-  // Filtre les events qui correspondent déjà à un chantier de l'app (par googleEventId)
-  const linkedEventIds = new Set((data.chantiers || []).map(c => c.googleEventId).filter(Boolean));
-  const googleEventsToShow = googleEvents.filter(ev => !linkedEventIds.has(ev.id));
-
-  // ---- Construction des lignes (utilisateurs) ----
-  const rows = planningAllRows();
-  const rowsActives = rows.filter(r => {
-    return chantiers.some(ch => {
-      const workers = planningWorkersForChantier(ch);
-      return workers.some(w => w.toLowerCase() === r.key);
+  const eventsForDay = (d) => {
+    const dStr = d.toISOString().slice(0,10);
+    return sortedEvents.filter(ev => {
+      const startISO = (ev.start && ev.start.dateTime) || (ev.start && ev.start.date) || '';
+      const endISO = (ev.end && ev.end.dateTime) || (ev.end && ev.end.date) || '';
+      if (!startISO) return false;
+      const sDay = startISO.slice(0,10);
+      let eDay = endISO ? endISO.slice(0,10) : sDay;
+      // Pour un all-day, end.date est exclusif (jour suivant)
+      if (ev.end && ev.end.date && !ev.end.dateTime && eDay) {
+        const dEnd = new Date(eDay + 'T00:00:00');
+        dEnd.setDate(dEnd.getDate() - 1);
+        eDay = dEnd.toISOString().slice(0,10);
+      }
+      return dStr >= sDay && dStr <= eDay;
     });
-  });
-  const finalRows = rowsActives.length > 0 ? rowsActives : [rows[0]];
+  };
 
-  const headerCells = days.map((d, i) => {
+  // Index des chantiers déjà liés à un event (pour ouvrir directement le chantier au clic)
+  const linkedByEventId = new Map();
+  (data.chantiers || []).forEach(c => {
+    if (c.googleEventId) linkedByEventId.set(c.googleEventId, c.id);
+  });
+
+  const daysHtml = days.map((d, i) => {
     const dStr = d.toISOString().slice(0,10);
     const isToday = (dStr === todayStr);
-    const dayNum = d.getDate();
-    const styleHL = isToday ? 'background:#fff8e1; border-radius:4px;' : '';
-    return `<div style="text-align:center; font-weight:600; font-size:12px; color:#444; padding:4px; ${styleHL}">
-      ${dayLabels[i]} ${String(dayNum).padStart(2, '0')}
-    </div>`;
-  }).join('');
-
-  const rowsHtml = finalRows.map(row => {
-    const cells = days.map(d => {
-      const dStr = d.toISOString().slice(0,10);
-      const isToday = (dStr === todayStr);
-      const chsForCell = chantiers.filter(ch => {
-        const workers = planningWorkersForChantier(ch);
-        if (!workers.some(w => w.toLowerCase() === row.key)) return false;
-        const dates = planningChantierDates(ch);
-        return dates.some(dd => dd.toISOString().slice(0,10) === dStr);
-      });
-      if (chsForCell.length === 0) {
-        return `<div style="min-height:34px; border:1px dashed #e0e0e0; border-radius:4px; ${isToday ? 'background:#fffbea;' : ''}"></div>`;
-      }
-      const blocks = chsForCell.map(ch => {
-        const color = planningColorForChantier(ch.id);
-        const stat = ch.statut || 'en_cours';
-        const isPlanned = (stat === 'planifie');
-        const bg = isPlanned ? `repeating-linear-gradient(45deg, ${color}, ${color} 4px, ${color}cc 4px, ${color}cc 8px)` : color;
-        const nomCl = (ch.client || (data.clients.find(c => c.id === ch.clientId)?.name) || '?');
-        const safeName = escapeHtml(nomCl).slice(0, 14);
-        return `<div onclick="dashboardOpenChantier('${ch.id}')" title="${escapeHtml(nomCl)} (${stat})" style="cursor:pointer; background:${bg}; color:#fff; padding:3px 5px; border-radius:3px; font-size:11px; font-weight:600; line-height:1.1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-bottom:2px;">${safeName}</div>`;
-      }).join('');
-      return `<div style="min-height:34px; padding:1px; ${isToday ? 'background:#fffbea; border-radius:4px;' : ''}">${blocks}</div>`;
-    }).join('');
-    return `
-      <div style="font-weight:600; font-size:13px; color:#333; padding:8px 4px; border-right:1px solid #eee;">${escapeHtml(row.name)}</div>
-      ${cells}
-    `;
-  }).join('');
-
-  // ---- Ligne Google (events sans chantier) ----
-  let googleRowHtml = '';
-  if (googleEventsToShow.length > 0) {
-    const evCells = days.map(d => {
-      const dStr = d.toISOString().slice(0,10);
-      const isToday = (dStr === todayStr);
-      const evsForCell = googleEventsToShow.filter(ev => {
-        const startISO = (ev.start && ev.start.date) || (ev.start && ev.start.dateTime) || '';
-        const endISO = (ev.end && ev.end.date) || (ev.end && ev.end.dateTime) || '';
-        if (!startISO) return false;
-        const sDay = startISO.slice(0,10);
-        // Pour un all-day, end.date est exclusif (jour suivant)
-        let eDay = endISO ? endISO.slice(0,10) : sDay;
-        if (ev.end && ev.end.date && eDay) {
-          const dEnd = new Date(eDay + 'T00:00:00');
-          dEnd.setDate(dEnd.getDate() - 1);
-          eDay = dEnd.toISOString().slice(0,10);
-        }
-        return dStr >= sDay && dStr <= eDay;
-      });
-      if (evsForCell.length === 0) {
-        return `<div style="min-height:34px; border:1px dashed #e0e0e0; border-radius:4px; ${isToday ? 'background:#fffbea;' : ''}"></div>`;
-      }
-      const blocks = evsForCell.map(ev => {
-        const safeId = String(ev.id).replace(/'/g, "\\'");
-        const tt = escapeHtml(ev.summary || '(Sans titre)');
-        const safeName = tt.slice(0, 14);
-        const bg = `repeating-linear-gradient(45deg, #b0b0b0, #b0b0b0 4px, #c8c8c8 4px, #c8c8c8 8px)`;
-        return `<div onclick="convertGoogleEventToChantier('${safeId}')" title="${tt} · clique pour convertir en chantier" style="cursor:pointer; background:${bg}; color:#fff; padding:3px 5px; border-radius:3px; font-size:11px; font-weight:600; line-height:1.1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-bottom:2px; border:1px solid #888;">📅 ${safeName}</div>`;
-      }).join('');
-      return `<div style="min-height:34px; padding:1px; ${isToday ? 'background:#fffbea; border-radius:4px;' : ''}">${blocks}</div>`;
-    }).join('');
-    googleRowHtml = `
-      <div style="font-weight:600; font-size:13px; color:#666; padding:8px 4px; border-right:1px solid #eee;">📅 Google <span style="background:#888;color:#fff;padding:1px 4px;border-radius:3px;font-size:10px;">G</span></div>
-      ${evCells}
-    `;
-  }
-
-  // ---- Légende chantiers ----
-  const legendHtml = chantiers.length > 0 ? chantiers.map(ch => {
-    const color = planningColorForChantier(ch.id);
-    const dates = planningChantierDates(ch).filter(d => d >= monday && d <= sunday);
-    if (dates.length === 0) return '';
-    const first = dates[0], last = dates[dates.length - 1];
-    const range = first.getTime() === last.getTime()
-      ? dayLabels[(first.getDay() + 6) % 7]
-      : dayLabels[(first.getDay() + 6) % 7] + '-' + dayLabels[(last.getDay() + 6) % 7];
-    const nomCl = (ch.client || (data.clients.find(c => c.id === ch.clientId)?.name) || '?');
-    const adresse = ch.adresse ? ' (' + escapeHtml(ch.adresse) + ')' : '';
-    const typeBadge = (ch.type || 'perso') === 'babad' ? ' <span style="background:#2980b9; color:#fff; padding:1px 5px; border-radius:3px; font-size:10px;">BABAD</span>' : '';
-    return `<div onclick="dashboardOpenChantier('${ch.id}')" style="cursor:pointer; display:flex; align-items:center; gap:6px; padding:4px 0; font-size:13px;">
-      <span style="width:12px; height:12px; background:${color}; border-radius:3px; flex-shrink:0;"></span>
-      <span><strong>${escapeHtml(range)}</strong> · ${escapeHtml(nomCl)}${typeBadge}${adresse}</span>
-    </div>`;
-  }).join('') : '<div style="color:#888; font-size:13px; font-style:italic;">Aucun chantier programmé cette semaine.</div>';
-
-  // ---- Légende events Google ----
-  let googleLegendHtml = '';
-  if (googleEventsToShow.length > 0) {
-    googleLegendHtml = `
-      <div style="margin-top:10px; padding-top:8px; border-top:1px dashed #eee;">
-        <div style="font-size:12px; color:#666; font-weight:600; margin-bottom:6px;">📅 Events Google sans chantier (clique pour convertir)</div>
-        ${googleEventsToShow.map(ev => {
+    const dayNum = String(d.getDate()).padStart(2, '0');
+    const monthNum = String(d.getMonth() + 1).padStart(2, '0');
+    const evs = eventsForDay(d);
+    const headerStyle = isToday
+      ? 'background:#fff8e1; padding:6px 10px; border-radius:6px; font-weight:700; color:#3d6f28;'
+      : 'padding:6px 10px; font-weight:600; color:#444;';
+    const eventsHtml = evs.length === 0
+      ? `<div style="font-size:12px; color:#bbb; font-style:italic; padding:2px 14px;">(rien)</div>`
+      : evs.map(ev => {
           const safeId = String(ev.id).replace(/'/g, "\\'");
           const title = escapeHtml(ev.summary || '(Sans titre)');
-          const startISO = (ev.start && ev.start.date) || (ev.start && ev.start.dateTime) || '';
-          const dStart = startISO ? new Date(startISO).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' }) : '?';
-          const loc = ev.location ? ' · 📍 ' + escapeHtml(ev.location) : '';
-          return `<div style="display:flex; align-items:center; gap:6px; padding:4px 0; font-size:13px;">
-            <span style="width:12px; height:12px; background:repeating-linear-gradient(45deg, #b0b0b0, #b0b0b0 3px, #c8c8c8 3px, #c8c8c8 6px); border-radius:3px; flex-shrink:0; border:1px solid #888;"></span>
-            <span style="flex:1;"><strong>${dStart}</strong> · ${title}${loc}</span>
-            <button class="btn-add btn-small" onclick="convertGoogleEventToChantier('${safeId}')">→ Convertir en chantier</button>
+          const time = formatEventTime(ev);
+          const loc = ev.location ? ' <span style="color:#888;">· 📍 ' + escapeHtml(ev.location) + '</span>' : '';
+          // Si déjà lié à un chantier → clic ouvre le chantier ; sinon → propose conversion
+          const linkedChId = linkedByEventId.get(ev.id);
+          if (linkedChId) {
+            return `<div onclick="dashboardOpenChantier('${linkedChId}')" style="cursor:pointer; padding:4px 14px; font-size:13px; border-left:3px solid #5ba241; margin:2px 0; background:#f7faf3;">
+              <strong>${time ? '📅 ' + time : '📅'}</strong> ${title}${loc} <span style="color:#5ba241; font-size:11px;">⚒ chantier</span>
+            </div>`;
+          }
+          return `<div onclick="convertGoogleEventToChantier('${safeId}')" title="Clique pour convertir en chantier" style="cursor:pointer; padding:4px 14px; font-size:13px; border-left:3px solid #aaa; margin:2px 0;">
+            <strong>${time ? '📅 ' + time : '📅'}</strong> ${title}${loc}
           </div>`;
-        }).join('')}
+        }).join('');
+    return `
+      <div style="margin-bottom:8px;">
+        <div style="${headerStyle} border-bottom:1px solid #eee;">
+          ${dayLabels[i]} ${dayNum}/${monthNum}${isToday ? " · aujourd'hui" : ''}
+        </div>
+        ${eventsHtml}
       </div>
     `;
-  }
-
-  // ---- Statut Google (header) ----
-  let googleBadge = '';
-  if (!googleConnected) {
-    googleBadge = `<span style="font-size:11px; color:#888; padding:2px 6px; background:#f0f0f0; border-radius:10px;">🔌 Google déconnecté</span>`;
-  } else if (googleStatus === 'err') {
-    googleBadge = `<span style="font-size:11px; color:#e67e22; padding:2px 6px; background:#fef5e7; border-radius:10px;">⚠️ Google : erreur</span>`;
-  } else if (googleStatus === 'ok') {
-    googleBadge = `<span style="font-size:11px; color:#27ae60; padding:2px 6px; background:#eafaf1; border-radius:10px;">✓ Google synchro</span>`;
-  }
+  }).join('');
 
   el.innerHTML = `
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:6px;">
-      <h3 style="margin:0;">📅 Planning de la semaine ${googleBadge}</h3>
-      <div style="display:flex; gap:6px; align-items:center;">
-        <button class="btn-secondary btn-small" onclick="planningWeekShift(-1)" title="Semaine précédente">←</button>
-        <button class="btn-secondary btn-small" onclick="planningWeekToday()" style="${isCurrentWeek ? 'opacity:0.5;' : ''}">Aujourd'hui</button>
-        <button class="btn-secondary btn-small" onclick="planningWeekShift(1)" title="Semaine suivante">→</button>
-        <button class="btn-secondary btn-small" onclick="planningRefresh()" title="Rafraîchir Google Agenda">🔄</button>
-      </div>
+      <h3 style="margin:0;">📅 Planning semaine Google Agenda ${googleBadge}</h3>
+      ${navBtns}
     </div>
     <div style="font-size:12px; color:#888; margin-bottom:10px;">
       ${mondayStr} → ${sundayStr}${isCurrentWeek ? ' · cette semaine' : ''}
     </div>
-    <div style="overflow-x:auto;">
-      <div style="display:grid; grid-template-columns:130px repeat(7, minmax(80px, 1fr)); gap:4px; min-width:680px;">
-        <div></div>
-        ${headerCells}
-        ${rowsHtml}
-        ${googleRowHtml}
-      </div>
-    </div>
-    <div style="margin-top:14px; padding-top:10px; border-top:1px dashed #ddd;">
-      <div style="font-size:12px; color:#666; font-weight:600; margin-bottom:6px;">Légende des chantiers</div>
-      ${legendHtml}
-      ${googleLegendHtml}
-      <div style="font-size:11px; color:#888; margin-top:8px;">
-        █ Confirmé (en cours) &nbsp;·&nbsp; ▓ Planifié (rayé) &nbsp;·&nbsp; ▓ gris = event Google sans chantier &nbsp;·&nbsp; cliquer pour ouvrir/convertir
-      </div>
+    <div>${daysHtml}</div>
+    <div style="font-size:11px; color:#888; margin-top:10px; padding-top:8px; border-top:1px dashed #eee;">
+      Clique sur un event pour ouvrir le chantier lié ou le convertir en chantier.
     </div>
   `;
 }
 
 // Skeleton léger pendant le fetch des events Google (évite l'écran vide)
-function renderPlanningSkeleton(el, monday, sunday, chantiers, days, dayLabels, todayStr, isCurrentWeek, mondayStr, sundayStr, googleConnected, status) {
+function renderPlanningSkeleton(el, monday, sunday, _unused1, _unused2, _unused3, todayStr, isCurrentWeek, mondayStr, sundayStr, googleConnected, status) {
   if (!el) return;
   const loadingBadge = `<span style="font-size:11px; color:#888; padding:2px 6px; background:#f0f0f0; border-radius:10px;">⏳ Chargement Google…</span>`;
   el.innerHTML = `
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:6px;">
-      <h3 style="margin:0;">📅 Planning de la semaine ${loadingBadge}</h3>
+      <h3 style="margin:0;">📅 Planning semaine Google Agenda ${loadingBadge}</h3>
       <div style="display:flex; gap:6px; align-items:center;">
         <button class="btn-secondary btn-small" onclick="planningWeekShift(-1)" title="Semaine précédente">←</button>
         <button class="btn-secondary btn-small" onclick="planningWeekToday()" style="${isCurrentWeek ? 'opacity:0.5;' : ''}">Aujourd'hui</button>
@@ -10453,6 +10716,20 @@ initBackup();
       }, 200);
     }
   }, 100);
+})();
+
+// Auto-détection des chantiers en doublon au démarrage (toast subtil si > 3 doublons)
+(function checkChantierDuplicatesOnStart() {
+  try {
+    if (typeof detectAllChantierDuplicates !== 'function') return;
+    const groups = detectAllChantierDuplicates(30);
+    const totalDups = groups.reduce((s, g) => s + g.length, 0);
+    if (totalDups > 3) {
+      setTimeout(() => {
+        toast('🧹 Tu as ' + totalDups + ' chantiers en doublon — onglet Chantiers > Fusionner');
+      }, 1500);
+    }
+  } catch(e) { console.warn('checkChantierDuplicatesOnStart error', e); }
 })();
 
 // Vérifier au démarrage si un timer était actif avant fermeture de l'app
