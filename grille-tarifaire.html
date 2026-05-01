@@ -13,85 +13,215 @@
 <link rel="icon" type="image/png" href="icon-192.png">
 <title>Grille Tarifaire - E.I Alex'terieur</title>
 <style>
+  :root {
+    --green: #5ba241;
+    --green-dark: #3d6f28;
+    --green-light: #eaf4e3;
+    --orange: #f39c12;
+    --red: #c0392b;
+    --blue: #3498db;
+    --bg: #f4f6f4;
+    --border: #e0e0e0;
+    --text: #222;
+    --text-muted: #666;
+    --white: #fff;
+    --header-bg: #fafafa;
+    --header-border: #e8e8e8;
+    --tab-height: 52px;
+    --radius: 8px;
+    --shadow: 0 1px 4px rgba(0,0,0,0.10);
+  }
+
   * { box-sizing: border-box; }
   body {
     font-family: -apple-system, Segoe UI, Roboto, sans-serif;
     margin: 0;
-    background: #f4f6f4;
-    color: #222;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
   }
+
+  /* ── HEADER ── */
   header {
-    background: linear-gradient(90deg, #5ba241, #8cc63f);
-    color: white;
-    padding: 16px 24px;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    background: var(--header-bg);
+    border-bottom: 2px solid var(--header-border);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+    position: sticky;
+    top: 0;
+    z-index: 200;
   }
   .header-top {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    flex-wrap: wrap;
     gap: 12px;
-    margin-bottom: 12px;
+    padding: 10px 20px;
+    min-height: 60px;
   }
-  header h1 { margin: 0; font-size: 22px; }
-  header .sub { font-size: 13px; opacity: 0.9; }
+  .header-logo {
+    height: 46px;
+    width: auto;
+    flex-shrink: 0;
+    border-radius: 4px;
+  }
+  .header-sync {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-muted);
+    flex-wrap: wrap;
+  }
+  .header-sync .gs-info { font-size: 12px; color: var(--text-muted); }
+  .header-sync .gs-status { font-size: 12px; color: var(--text-muted); }
+  .header-sync .gs-btn-primary {
+    background: var(--green);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .header-sync .gs-btn-secondary {
+    background: #f0f0f0;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .header-sync select {
+    padding: 5px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  .btn-settings {
+    background: none;
+    border: none;
+    font-size: 22px;
+    cursor: pointer;
+    padding: 6px;
+    border-radius: 6px;
+    color: var(--text-muted);
+    transition: background 0.15s;
+    line-height: 1;
+  }
+  .btn-settings:hover { background: var(--green-light); color: var(--green-dark); }
 
+  /* ── BARRE D'ONGLETS ── */
   .tabs {
     display: flex;
-    gap: 4px;
-    border-bottom: 2px solid rgba(255,255,255,0.2);
+    gap: 0;
+    border-top: 1px solid var(--border);
+    background: var(--white);
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
   }
+  .tabs::-webkit-scrollbar { display: none; }
   .tab {
     background: transparent;
-    color: rgba(255,255,255,0.7);
+    color: var(--text-muted);
     border: none;
-    padding: 10px 18px;
-    font-size: 14px;
+    padding: 0 16px;
+    height: var(--tab-height);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    border-bottom: 3px solid transparent;
+    white-space: nowrap;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .tab .tab-icon { font-size: 16px; }
+  .tab.active {
+    color: var(--green);
+    border-bottom-color: var(--green);
+    font-weight: 600;
+  }
+  .tab:hover:not(.active) { color: var(--green-dark); background: var(--green-light); }
+
+  /* ── SOUS-ONGLETS INTERNES ── */
+  .sub-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 2px solid var(--border);
+    background: var(--white);
+    margin-bottom: 20px;
+    border-radius: var(--radius) var(--radius) 0 0;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+  .sub-tab {
+    background: transparent;
+    color: var(--text-muted);
+    border: none;
+    padding: 12px 20px;
+    font-size: 13px;
     font-weight: 500;
     cursor: pointer;
     border-bottom: 3px solid transparent;
     margin-bottom: -2px;
+    transition: color 0.15s, border-color 0.15s;
   }
-  .tab.active {
-    color: white;
-    border-bottom-color: white;
+  .sub-tab.active {
+    color: var(--green);
+    border-bottom-color: var(--green);
+    font-weight: 600;
   }
-  .tab:hover { color: white; }
+  .sub-tab:hover:not(.active) { color: var(--green-dark); background: var(--green-light); }
+  .sub-page { display: none; }
+  .sub-page.active { display: block; }
 
+  /* ── BOUTONS GLOBAUX ── */
   .toolbar { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
   button {
     cursor: pointer;
     border: none;
     border-radius: 6px;
-    padding: 8px 14px;
+    padding: 10px 16px;
     font-size: 14px;
     font-weight: 500;
     transition: all 0.15s;
   }
   button:hover { transform: translateY(-1px); box-shadow: 0 2px 4px rgba(0,0,0,0.15); }
-  .btn-primary { background: #fff; color: #5ba241; }
-  .btn-ghost { background: rgba(255,255,255,0.2); color: white; border: 1px solid rgba(255,255,255,0.4); }
-  .btn-danger { background: #e74c3c; color: white; }
-  .btn-add { background: #5ba241; color: white; }
+  .btn-primary { background: var(--white); color: var(--green); border: 1px solid var(--border); }
+  .btn-ghost { background: rgba(255,255,255,0.2); color: var(--text); border: 1px solid var(--border); }
+  .btn-danger { background: var(--red); color: white; }
+  .btn-add { background: var(--green); color: white; }
   .btn-secondary { background: #e8e8e8; color: #333; }
-  .btn-small { padding: 4px 10px; font-size: 12px; }
+  .btn-small { padding: 6px 12px; font-size: 12px; min-height: 32px; }
 
   .toggle-group {
     display: inline-flex;
-    background: rgba(255,255,255,0.15);
+    background: #f0f0f0;
     border-radius: 6px;
     padding: 2px;
   }
   .toggle-group button {
     background: transparent;
-    color: rgba(255,255,255,0.8);
+    color: var(--text-muted);
     padding: 5px 12px;
     font-size: 13px;
+    border: none;
   }
   .toggle-group button.active {
-    background: white;
-    color: #5ba241;
+    background: var(--green);
+    color: white;
   }
 
   main { max-width: 1200px; margin: 0 auto; padding: 20px; }
@@ -429,19 +559,15 @@
   .cl-item-meta { font-size: 12px; color: #666; margin-top: 2px; }
 
   /* Mobile */
-  @media (max-width: 720px) {
-    header { padding: 12px 14px; }
-    header h1 { font-size: 18px; }
+  @media (max-width: 768px) {
+    .header-top { padding: 8px 12px; min-height: 52px; }
+    .header-logo { height: 38px; }
+    .header-sync .gs-info { font-size: 11px; }
+    .header-sync button { font-size: 11px; padding: 4px 8px; }
+    .btn-settings { font-size: 20px; }
     main { padding: 12px; }
-    .header-top { gap: 8px; }
-    .tabs {
-      overflow-x: auto;
-      white-space: nowrap;
-      -webkit-overflow-scrolling: touch;
-      scrollbar-width: none;
-    }
-    .tabs::-webkit-scrollbar { display: none; }
-    .tab { padding: 8px 12px; font-size: 13px; flex-shrink: 0; }
+    .tab { padding: 0 12px; font-size: 12px; gap: 4px; }
+    .tab .tab-icon { font-size: 14px; }
     .toolbar { width: 100%; }
     .form-grid { grid-template-columns: 1fr; }
     table { font-size: 13px; }
@@ -451,8 +577,8 @@
     td input, td select { font-size: 13px; padding: 4px 6px; }
     .cat-header { flex-wrap: wrap; }
     .cat-actions { width: 100%; margin-top: 6px; }
-    button { padding: 8px 12px; font-size: 13px; }
-    .btn-small { padding: 6px 10px; font-size: 12px; min-height: 32px; }
+    button { padding: 10px 14px; font-size: 13px; }
+    .btn-small { padding: 6px 10px; font-size: 12px; min-height: 34px; }
     .presta-line, .dv-line {
       grid-template-columns: 1fr;
       gap: 4px;
@@ -466,7 +592,14 @@
     .msg { max-width: 92%; font-size: 14px; }
     .settings-row { gap: 8px; }
     .settings-row input { width: 70px; }
-    #backup-status { display: block; margin-bottom: 4px; }
+    #backup-status { display: none; }
+    .sub-tab { padding: 10px 14px; font-size: 12px; }
+  }
+
+  @media (max-width: 480px) {
+    .tab .tab-icon { display: block; font-size: 16px; }
+    .tab { font-size: 10px; padding: 0 8px; flex-direction: column; height: 52px; gap: 2px; justify-content: center; }
+    .header-sync { display: none; }
   }
 
   /* Print — devis */
@@ -546,14 +679,14 @@
   .dv-print-totals td { padding: 4px 8px; }
   .dv-print-totals .grand { font-size: 16px; font-weight: 700; color: #5ba241; border-top: 2px solid #5ba241; padding-top: 8px; }
 
-  /* Google Sync UI */
-  #google-sync-zone { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:6px; }
-  #google-sync-zone .gs-info { font-size:12px; color:rgba(255,255,255,0.9); }
-  #google-sync-zone .gs-status { font-size:12px; color:rgba(255,255,255,0.85); min-width:90px; }
+  /* Google Sync UI — dans header-sync */
+  #google-sync-zone { display:contents; }
+  #google-sync-zone .gs-info { font-size:12px; color:var(--text-muted); }
+  #google-sync-zone .gs-status { font-size:12px; color:var(--text-muted); }
   #google-sync-zone button { font-size:12px; padding:5px 10px; border:none; border-radius:5px; cursor:pointer; }
-  #google-sync-zone .gs-btn-primary { background:#fff; color:#3d6f28; font-weight:600; }
-  #google-sync-zone .gs-btn-secondary { background:rgba(255,255,255,0.18); color:#fff; }
-  #google-sync-zone .gs-btn-secondary:hover { background:rgba(255,255,255,0.28); }
+  #google-sync-zone .gs-btn-primary { background:var(--green); color:#fff; font-weight:600; }
+  #google-sync-zone .gs-btn-secondary { background:#f0f0f0; color:var(--text); border:1px solid var(--border); }
+  #google-sync-zone .gs-btn-secondary:hover { background:var(--green-light); }
 </style>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
@@ -636,60 +769,56 @@
 
 <header>
   <div class="header-top">
-    <div>
-      <h1>Grille Tarifaire</h1>
-      <div class="sub">E.I Alex'terieur — <span id="year-label">2025</span></div>
-    </div>
-    <div class="toolbar">
-      <div class="toggle-group">
-        <button id="btn-ht" class="active" onclick="setPriceMode('HT')">HT</button>
-        <button id="btn-ttc" onclick="setPriceMode('TTC')">TTC</button>
+    <!-- Logo -->
+    <img src="logo.png" alt="Alex'terieur" class="header-logo">
+
+    <!-- Zone sync Google (centrale) -->
+    <div class="header-sync">
+      <div id="google-sync-zone">
+        <span class="gs-info" id="gs-info">🔌 Google : déconnecté</span>
+        <span class="gs-status" id="gs-status"></span>
+        <button class="gs-btn-primary" id="gs-connect-btn" onclick="googleConnect()">🔗 Connecter Google</button>
+        <button class="gs-btn-secondary" id="gs-disconnect-btn" style="display:none;" onclick="googleDisconnect()">Déconnecter</button>
+        <button class="gs-btn-secondary" id="gs-sync-all-btn" style="display:none;" onclick="googleSyncAllChantiers()">🔄 Synchro</button>
+        <button class="gs-btn-secondary" id="gs-force-push-btn" style="display:none;" onclick="googleForcePush()">🚀 Push</button>
+        <button class="gs-btn-secondary" id="gs-force-pull-btn" style="display:none;" onclick="googleForcePull()">📥 Pull</button>
+        <select id="gs-calendar-select" style="display:none;" onchange="googleSelectCalendar(this.value)" title="Choisir l'agenda Google"></select>
       </div>
-      <span style="color:rgba(255,255,255,0.8); font-size:13px;">TVA</span>
-      <input type="number" id="tva-input" style="width:55px; padding:5px; border-radius:4px; border:none; font-size:13px;"
-             step="0.1" onchange="updateTVA(this.value)">
-      <span style="color:rgba(255,255,255,0.8); font-size:13px;">%</span>
-      <button class="btn-ghost" onclick="exportJSON()">Exporter</button>
-      <button class="btn-ghost" onclick="document.getElementById('import-file').click()">Importer</button>
-      <button class="btn-ghost" onclick="window.print()">Imprimer</button>
-      <input type="file" id="import-file" accept=".json" style="display:none" onchange="importJSON(event)">
+    </div>
+
+    <!-- Actions droite -->
+    <div class="header-actions">
+      <span id="backup-status" style="font-size:11px; color:var(--text-muted);"></span>
+      <button class="btn-settings" onclick="showPage('parametres')" title="Paramètres">⚙️</button>
     </div>
   </div>
+
+  <!-- Barre d'onglets principale (8 onglets) -->
   <div class="tabs">
-    <button class="tab active" data-page="grille" onclick="showPage('grille')">Grille</button>
+    <button class="tab" data-page="chantiers" onclick="showPage('chantiers')"><span class="tab-icon">🏗️</span>Chantiers</button>
+    <button class="tab" data-page="stock" onclick="showPage('stock')"><span class="tab-icon">📦</span>Stock</button>
+    <button class="tab" data-page="achats" onclick="showPage('achats')"><span class="tab-icon">🛒</span>Achats</button>
+    <button class="tab" data-page="clients" onclick="showPage('clients')"><span class="tab-icon">👥</span>Clients</button>
+    <button class="tab" data-page="business" onclick="showPage('business')"><span class="tab-icon">💰</span>Business</button>
+    <button class="tab" data-page="catalogue" onclick="showPage('catalogue')"><span class="tab-icon">🌱</span>Catalogue</button>
+    <button class="tab" data-page="assistant" onclick="showPage('assistant')"><span class="tab-icon">🤖</span>Assistant IA</button>
+    <button class="tab" data-page="parametres" onclick="showPage('parametres')"><span class="tab-icon">⚙️</span>Paramètres</button>
+    <!-- Onglets cachés (code intact) -->
     <button class="tab" data-page="devis" onclick="showPage('devis')" style="display:none;">Devis</button>
-    <button class="tab" data-page="achats" onclick="showPage('achats')">Achats</button>
-    <button class="tab" data-page="stock" onclick="showPage('stock')">Stock</button>
-    <button class="tab" data-page="fournisseurs" onclick="showPage('fournisseurs')">Fournisseurs</button>
-    <button class="tab" data-page="clients" onclick="showPage('clients')">Clients</button>
     <button class="tab" data-page="kits" onclick="showPage('kits')" style="display:none;">Kits</button>
-    <button class="tab" data-page="chantiers" onclick="showPage('chantiers')">Chantiers</button>
-    <button class="tab" data-page="compta" onclick="showPage('compta')">Comptabilité</button>
-    <button class="tab" data-page="gravier" onclick="showPage('gravier')">Gravier</button>
-    <button class="tab" data-page="marketing" onclick="showPage('marketing')">📣 Marketing</button>
-    <button class="tab" data-page="assistant" onclick="showPage('assistant')">Assistant IA</button>
-  </div>
-  <div style="margin-top:8px;">
-    <span id="backup-status" style="font-size:12px; color:rgba(255,255,255,0.85);"></span>
-    <button id="backup-btn" class="btn-ghost btn-small" style="margin-left:8px;" onclick="toggleBackup()">Sauvegarde auto</button>
-    <button class="btn-ghost btn-small" onclick="manualBackup()">Sauvegarder maintenant</button>
-  </div>
-  <div id="google-sync-zone">
-    <span class="gs-info" id="gs-info">🔌 Google : déconnecté</span>
-    <span class="gs-status" id="gs-status"></span>
-    <button class="gs-btn-primary" id="gs-connect-btn" onclick="googleConnect()">🔗 Connecter Google</button>
-    <button class="gs-btn-secondary" id="gs-disconnect-btn" style="display:none;" onclick="googleDisconnect()">Déconnecter</button>
-    <button class="gs-btn-secondary" id="gs-sync-all-btn" style="display:none;" onclick="googleSyncAllChantiers()">🔄 Synchroniser tous les chantiers</button>
-    <button class="gs-btn-secondary" id="gs-force-push-btn" style="display:none;" onclick="googleForcePush()">🚀 Envoyer mes données → Drive</button>
-    <button class="gs-btn-secondary" id="gs-force-pull-btn" style="display:none;" onclick="googleForcePull()">📥 Charger depuis Drive →</button>
-    <select id="gs-calendar-select" style="display:none;margin-left:8px;padding:6px 8px;border-radius:6px;border:1px solid #ccc;font-size:13px;" onchange="googleSelectCalendar(this.value)" title="Choisir l'agenda Google à utiliser pour les chantiers"></select>
+    <!-- Anciens onglets déplacés dans Business/Catalogue — gardés masqués pour compatibilité showPage() -->
+    <button class="tab" data-page="grille" onclick="showPage('grille')" style="display:none;">Grille</button>
+    <button class="tab" data-page="fournisseurs" onclick="showPage('fournisseurs')" style="display:none;">Fournisseurs</button>
+    <button class="tab" data-page="compta" onclick="showPage('compta')" style="display:none;">Comptabilité</button>
+    <button class="tab" data-page="gravier" onclick="showPage('gravier')" style="display:none;">Gravier</button>
+    <button class="tab" data-page="marketing" onclick="showPage('marketing')" style="display:none;">Marketing</button>
   </div>
 </header>
 
 <main>
 
-  <!-- PAGE GRILLE -->
-  <div id="page-grille" class="page active">
+  <!-- PAGE GRILLE (dans Catalogue) -->
+  <div id="page-grille" class="page">
     <input class="search" type="text" placeholder="Rechercher une prestation..." oninput="filterItems(this.value)">
     <div style="margin-bottom:12px;">
       <button class="btn-add" onclick="addCategory()">+ Catégorie</button>
@@ -1049,8 +1178,8 @@
     </div>
   </div>
 
-  <!-- PAGE CHANTIERS -->
-  <div id="page-chantiers" class="page">
+  <!-- PAGE CHANTIERS (page d'accueil) -->
+  <div id="page-chantiers" class="page active">
     <div class="card">
       <h3>Ajouter un chantier</h3>
       <div class="form-grid">
@@ -1285,7 +1414,107 @@
     </div>
   </div>
 
+  <!-- PAGE BUSINESS (sous-onglets : Comptabilité | Marketing) -->
+  <div id="page-business" class="page">
+    <div class="sub-tabs">
+      <button class="sub-tab active" id="sub-btn-compta" onclick="showSubPage('business','compta')">📊 Comptabilité</button>
+      <button class="sub-tab" id="sub-btn-marketing" onclick="showSubPage('business','marketing')">📣 Marketing</button>
+    </div>
+    <div class="sub-page active" id="sub-page-business-compta" data-sub-render="compta">
+      <!-- Contenu injecté dynamiquement depuis page-compta -->
+    </div>
+    <div class="sub-page" id="sub-page-business-marketing" data-sub-render="marketing">
+      <!-- Contenu injecté dynamiquement depuis page-marketing -->
+    </div>
+  </div>
+
+  <!-- PAGE CATALOGUE (sous-onglets : Grille | Gravier | Fournisseurs) -->
+  <div id="page-catalogue" class="page">
+    <div class="sub-tabs">
+      <button class="sub-tab active" id="sub-btn-grille" onclick="showSubPage('catalogue','grille')">🌿 Grille tarifaire</button>
+      <button class="sub-tab" id="sub-btn-gravier" onclick="showSubPage('catalogue','gravier')">🪨 Gravier</button>
+      <button class="sub-tab" id="sub-btn-fournisseurs" onclick="showSubPage('catalogue','fournisseurs')">🏪 Fournisseurs</button>
+    </div>
+    <div class="sub-page active" id="sub-page-catalogue-grille" data-sub-render="grille">
+      <!-- Contenu injecté dynamiquement depuis page-grille -->
+    </div>
+    <div class="sub-page" id="sub-page-catalogue-gravier" data-sub-render="gravier">
+      <!-- Contenu injecté dynamiquement depuis page-gravier -->
+    </div>
+    <div class="sub-page" id="sub-page-catalogue-fournisseurs" data-sub-render="fournisseurs">
+      <!-- Contenu injecté dynamiquement depuis page-fournisseurs -->
+    </div>
+  </div>
+
+  <!-- PAGE PARAMETRES -->
+  <div id="page-parametres" class="page">
+    <div class="card" style="margin-bottom:16px;">
+      <h3 style="margin-top:0; color:var(--green-dark);">Affichage des prix</h3>
+      <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+        <div class="toggle-group">
+          <button id="btn-ht-p" onclick="setPriceMode('HT')">HT</button>
+          <button id="btn-ttc-p" onclick="setPriceMode('TTC')">TTC</button>
+        </div>
+        <div style="display:flex; align-items:center; gap:6px;">
+          <label style="font-size:13px; color:var(--text-muted);">TVA</label>
+          <input type="number" id="tva-input-p" style="width:65px; padding:7px 8px; border:1px solid var(--border); border-radius:6px; font-size:13px;"
+                 step="0.1" onchange="updateTVA(this.value)">
+          <span style="font-size:13px; color:var(--text-muted);">%</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <h3 style="margin-top:0; color:var(--green-dark);">Données</h3>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <button class="btn-add" onclick="exportJSON()">Exporter (JSON)</button>
+        <button class="btn-secondary" onclick="document.getElementById('import-file-p').click()">Importer (JSON)</button>
+        <input type="file" id="import-file-p" accept=".json" style="display:none" onchange="importJSON(event)">
+        <button class="btn-secondary" onclick="window.print()">Imprimer</button>
+        <button class="btn-danger btn-small" onclick="resetData()" style="margin-left:auto;">Réinitialiser</button>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <h3 style="margin-top:0; color:var(--green-dark);">Sauvegarde automatique</h3>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+        <span id="backup-status-p" style="font-size:13px; color:var(--text-muted);"></span>
+        <button id="backup-btn-p" class="btn-secondary btn-small" onclick="toggleBackup()">Activer / Désactiver</button>
+        <button class="btn-add btn-small" onclick="manualBackup()">Sauvegarder maintenant</button>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <h3 style="margin-top:0; color:var(--green-dark);">Connexion Google</h3>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+        <span id="gs-info-p" style="font-size:13px; color:var(--text-muted);">🔌 Google : déconnecté</span>
+        <span id="gs-status-p" style="font-size:12px; color:var(--text-muted);"></span>
+        <button class="btn-add btn-small" id="gs-connect-btn-p" onclick="googleConnect()">🔗 Connecter Google</button>
+        <button class="btn-secondary btn-small" id="gs-disconnect-btn-p" style="display:none;" onclick="googleDisconnect()">Déconnecter</button>
+        <button class="btn-secondary btn-small" id="gs-force-push-btn-p" style="display:none;" onclick="googleForcePush()">🚀 Envoyer → Drive</button>
+        <button class="btn-secondary btn-small" id="gs-force-pull-btn-p" style="display:none;" onclick="googleForcePull()">📥 Charger depuis Drive</button>
+        <button class="btn-secondary btn-small" id="gs-sync-all-btn-p" style="display:none;" onclick="googleSyncAllChantiers()">🔄 Synchro chantiers</button>
+        <select id="gs-calendar-select-p" style="display:none; padding:6px 8px; border-radius:6px; border:1px solid var(--border); font-size:13px;" onchange="googleSelectCalendar(this.value)" title="Choisir l'agenda Google"></select>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0; color:var(--green-dark);">Informations</h3>
+      <div style="font-size:13px; color:var(--text-muted); line-height:1.8;">
+        <div>Application : <strong>Alex'terieur Grille Tarifaire</strong></div>
+        <div>Année en cours : <span id="year-label-p">2025</span></div>
+        <div>Données stockées localement (localStorage)</div>
+        <div style="margin-top:8px; font-size:12px; color:#aaa;">Version cache : tarifs-v27</div>
+      </div>
+    </div>
+  </div>
+
 </main>
+
+<!-- Éléments de compatibilité JS (cachés, ne pas supprimer) -->
+<span id="backup-btn" style="display:none;"></span>
+<input type="number" id="tva-input" style="display:none;" step="0.1">
+<span id="year-label" style="display:none;"></span>
 
 <div id="toast" class="toast"></div>
 
@@ -1465,7 +1694,7 @@ const DEFAULT_DATA = {
 };
 
 let data = loadData();
-let currentPage = 'grille';
+let currentPage = 'chantiers';
 let newPrestaLines = [];
 let chantierStatutFilter = '';
 let chatState = { step: 0, context: {} };
@@ -1590,36 +1819,134 @@ function toast(msg) {
   setTimeout(() => t.classList.remove('show'), 1500);
 }
 
+// Mapping pages cachées → page wrapper + sous-onglet
+const PAGE_PARENT = {
+  grille:       { parent: 'catalogue',  sub: 'grille' },
+  gravier:      { parent: 'catalogue',  sub: 'gravier' },
+  fournisseurs: { parent: 'catalogue',  sub: 'fournisseurs' },
+  compta:       { parent: 'business',   sub: 'compta' },
+  marketing:    { parent: 'business',   sub: 'marketing' }
+};
+// Sous-onglet courant par page wrapper
+const _subCurrent = { business: 'compta', catalogue: 'grille' };
+
 function showPage(page) {
+  // Si page cachée, rediriger vers la page wrapper + sous-onglet
+  if (PAGE_PARENT[page]) {
+    const { parent, sub } = PAGE_PARENT[page];
+    showPage(parent);
+    showSubPage(parent, sub);
+    return;
+  }
+
   currentPage = page;
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  document.getElementById('page-' + page).classList.add('active');
-  document.querySelector(`.tab[data-page="${page}"]`).classList.add('active');
+  const pageEl = document.getElementById('page-' + page);
+  if (pageEl) pageEl.classList.add('active');
+  const tabEl = document.querySelector(`.tab[data-page="${page}"]`);
+  if (tabEl) tabEl.classList.add('active');
+
+  // Rendu selon la page
   if (page === 'chantiers') renderChantiers();
   if (page === 'assistant') renderAssistant();
-  if (page === 'gravier') renderGravier();
   if (page === 'devis') renderDevisPage();
   if (page === 'clients') renderClientsPage();
   if (page === 'kits') renderKitsPage();
-  if (page === 'fournisseurs') renderFournisseursPage();
-  if (page === 'compta') renderComptaPage();
   if (page === 'stock') renderStockPage();
   if (page === 'achats') renderAchatsPage();
-  if (page === 'marketing') renderMarketingPage();
+
+  // Pages wrapper : activer leur dernier sous-onglet actif
+  if (page === 'business') {
+    showSubPage('business', _subCurrent.business, false);
+  }
+  if (page === 'catalogue') {
+    showSubPage('catalogue', _subCurrent.catalogue, false);
+  }
+  if (page === 'parametres') {
+    syncParametresUI();
+  }
+}
+
+function showSubPage(wrapper, sub, updateCurrent) {
+  if (updateCurrent !== false) _subCurrent[wrapper] = sub;
+  // Désactiver tous les sub-tabs et sub-pages du wrapper
+  const wrapperEl = document.getElementById('page-' + wrapper);
+  if (!wrapperEl) return;
+  wrapperEl.querySelectorAll('.sub-tab').forEach(t => t.classList.remove('active'));
+  wrapperEl.querySelectorAll('.sub-page').forEach(p => p.classList.remove('active'));
+  // Activer le bon
+  const btn = document.getElementById('sub-btn-' + sub);
+  const subPage = document.getElementById('sub-page-' + wrapper + '-' + sub);
+  if (btn) btn.classList.add('active');
+  if (subPage) subPage.classList.add('active');
+  // Render du contenu dans le sous-onglet
+  if (sub === 'grille') { render(); }
+  if (sub === 'gravier') { renderGravier(); }
+  if (sub === 'fournisseurs') { renderFournisseursPage(); }
+  if (sub === 'compta') { renderComptaPage(); }
+  if (sub === 'marketing') { renderMarketingPage(); }
+}
+
+function syncParametresUI() {
+  // Sync TVA / mode prix / backup / google dans page paramètres
+  const tvaP = document.getElementById('tva-input-p');
+  if (tvaP) tvaP.value = data.tva;
+  const htP = document.getElementById('btn-ht-p');
+  const ttcP = document.getElementById('btn-ttc-p');
+  if (htP) htP.classList.toggle('active', data.priceMode === 'HT');
+  if (ttcP) ttcP.classList.toggle('active', data.priceMode === 'TTC');
+  const yl = document.getElementById('year-label-p');
+  if (yl) yl.textContent = data.year || '';
+  const bs = document.getElementById('backup-status-p');
+  const bsMain = document.getElementById('backup-status');
+  if (bs && bsMain) bs.textContent = bsMain.textContent;
+  // Sync Google buttons dans Paramètres
+  syncGoogleButtonsMirror();
+}
+
+function syncGoogleButtonsMirror() {
+  // Copie l'état des boutons Google du header vers la page Paramètres
+  const pairs = [
+    ['gs-info', 'gs-info-p'],
+    ['gs-status', 'gs-status-p'],
+    ['gs-connect-btn', 'gs-connect-btn-p'],
+    ['gs-disconnect-btn', 'gs-disconnect-btn-p'],
+    ['gs-force-push-btn', 'gs-force-push-btn-p'],
+    ['gs-force-pull-btn', 'gs-force-pull-btn-p'],
+    ['gs-sync-all-btn', 'gs-sync-all-btn-p'],
+    ['gs-calendar-select', 'gs-calendar-select-p'],
+  ];
+  pairs.forEach(([srcId, dstId]) => {
+    const src = document.getElementById(srcId);
+    const dst = document.getElementById(dstId);
+    if (!src || !dst) return;
+    if (src.tagName === 'SELECT') {
+      // Copie les options et la valeur sélectionnée
+      dst.innerHTML = src.innerHTML;
+      dst.value = src.value;
+      dst.style.display = src.style.display;
+    } else if (src.tagName === 'SPAN') {
+      dst.textContent = src.textContent;
+    } else {
+      dst.style.display = src.style.display;
+    }
+  });
 }
 
 function setPriceMode(mode) {
   data.priceMode = mode;
   saveData();
-  document.getElementById('btn-ht').classList.toggle('active', mode === 'HT');
-  document.getElementById('btn-ttc').classList.toggle('active', mode === 'TTC');
+  ['btn-ht', 'btn-ht-p'].forEach(id => { const el = document.getElementById(id); if (el) el.classList.toggle('active', mode === 'HT'); });
+  ['btn-ttc', 'btn-ttc-p'].forEach(id => { const el = document.getElementById(id); if (el) el.classList.toggle('active', mode === 'TTC'); });
   render();
 }
 
 function updateTVA(val) {
   data.tva = parseFloat(val) || 0;
   saveData();
+  const tvaP = document.getElementById('tva-input-p');
+  if (tvaP) tvaP.value = data.tva;
   render();
 }
 
@@ -1644,8 +1971,9 @@ function displayPrice(priceHT) {
 }
 
 function render() {
-  document.getElementById('year-label').textContent = data.year || '';
-  document.getElementById('tva-input').value = data.tva;
+  // Mettre à jour year-label et tva-input (cachés + page Paramètres)
+  ['year-label', 'year-label-p'].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = data.year || ''; });
+  ['tva-input', 'tva-input-p'].forEach(id => { const el = document.getElementById(id); if (el) el.value = data.tva; });
   const container = document.getElementById('categories');
   container.innerHTML = '';
 
@@ -7914,7 +8242,7 @@ function googleSetStatus(msg, color) {
   const el = document.getElementById('gs-status');
   if (!el) return;
   el.textContent = msg || '';
-  el.style.color = color || 'rgba(255,255,255,0.85)';
+  el.style.color = color || 'var(--text-muted)';
 }
 
 function googleUpdateUI() {
@@ -8445,6 +8773,51 @@ document.getElementById('new-date').value = new Date().toISOString().slice(0,10)
 ensureFournisseursLoaded(); // charge catalogue fournisseurs pour estimation PA auto
 render();
 initBackup();
+
+// Déplacer les pages originales dans leurs sous-conteneurs
+(function initSubPages() {
+  // Catalogue : Grille, Gravier, Fournisseurs
+  const catGrille = document.getElementById('sub-page-catalogue-grille');
+  const catGravier = document.getElementById('sub-page-catalogue-gravier');
+  const catFourni = document.getElementById('sub-page-catalogue-fournisseurs');
+  const pgGrille = document.getElementById('page-grille');
+  const pgGravier = document.getElementById('page-gravier');
+  const pgFourni = document.getElementById('page-fournisseurs');
+  if (catGrille && pgGrille) {
+    pgGrille.classList.remove('page');
+    pgGrille.style.display = '';
+    catGrille.appendChild(pgGrille);
+  }
+  if (catGravier && pgGravier) {
+    pgGravier.classList.remove('page');
+    pgGravier.style.display = '';
+    catGravier.appendChild(pgGravier);
+  }
+  if (catFourni && pgFourni) {
+    pgFourni.classList.remove('page');
+    pgFourni.style.display = '';
+    catFourni.appendChild(pgFourni);
+  }
+  // Business : Compta, Marketing
+  const busCompta = document.getElementById('sub-page-business-compta');
+  const busMarketing = document.getElementById('sub-page-business-marketing');
+  const pgCompta = document.getElementById('page-compta');
+  const pgMarketing = document.getElementById('page-marketing');
+  if (busCompta && pgCompta) {
+    pgCompta.classList.remove('page');
+    pgCompta.style.display = '';
+    busCompta.appendChild(pgCompta);
+  }
+  if (busMarketing && pgMarketing) {
+    pgMarketing.classList.remove('page');
+    pgMarketing.style.display = '';
+    busMarketing.appendChild(pgMarketing);
+  }
+  // Activer l'onglet Chantiers au démarrage
+  const tabChantiers = document.querySelector('.tab[data-page="chantiers"]');
+  if (tabChantiers) tabChantiers.classList.add('active');
+  renderChantiers();
+})();
 
 // Lien magique Google Agenda : ?chantier=ID[&action=start]
 (function handleMagicLink() {
