@@ -3072,7 +3072,7 @@ function renderChantiers() {
   const statutLabel = { planifie: 'Planifié', en_cours: 'En cours', cloture: 'Clôturé' };
   const isPatronMode = (typeof isPatron === 'function' && isPatron());
 
-  // ---- Groupement par client (clientId si dispo, sinon nom client) ----
+  // ---- Groupement par client : 1 ligne PAR CLIENT (Fix v39) ----
   const groupsMap = new Map();
   filtered.forEach(ch => {
     const fallbackName = ch.client || (data.clients.find(cl => cl.id === ch.clientId)?.name) || '?';
@@ -3088,133 +3088,114 @@ function renderChantiers() {
     groupsMap.get(key).chantiers.push(ch);
   });
 
-  // Construire la liste des groupes avec stats agrégées
+  // Construire la liste des groupes avec stats agrégées + dates clés
+  const todayMs = new Date().setHours(0,0,0,0);
   const groups = Array.from(groupsMap.values()).map(g => {
     let totalRevenue = 0, totalProfit = 0, totalHours = 0;
     let lastModified = 0;
+    let dernierChantier = null; // dernier clôturé/passé
+    let prochainChantier = null; // prochain planifié
     g.chantiers.forEach(ch => {
       const s = computeChantierStats(ch);
       totalRevenue += s.revenue;
       totalProfit += s.grossProfit;
       totalHours += (ch.hours || 0);
-      // dernier modifié : fallback sur ch.date si pas de updatedAt
       const ts = ch.updatedAt ? new Date(ch.updatedAt).getTime()
                 : ch.date ? new Date(ch.date + 'T00:00:00').getTime()
                 : 0;
       if (ts > lastModified) lastModified = ts;
+
+      // Dates : prochain (futur planifié) / dernier (passé)
+      if (ch.date) {
+        const dMs = new Date(ch.date + 'T00:00:00').getTime();
+        if (dMs >= todayMs) {
+          if (!prochainChantier || dMs < new Date(prochainChantier.date + 'T00:00:00').getTime()) {
+            prochainChantier = ch;
+          }
+        } else {
+          if (!dernierChantier || dMs > new Date(dernierChantier.date + 'T00:00:00').getTime()) {
+            dernierChantier = ch;
+          }
+        }
+      }
     });
     g.totalRevenue = totalRevenue;
     g.totalProfit = totalProfit;
     g.totalHours = totalHours;
     g.lastModified = lastModified;
-    // Tri interne : du plus récent au plus ancien
-    g.chantiers.sort((a, b) => {
-      const ta = a.updatedAt ? new Date(a.updatedAt).getTime() : (a.date ? new Date(a.date + 'T00:00:00').getTime() : 0);
-      const tb = b.updatedAt ? new Date(b.updatedAt).getTime() : (b.date ? new Date(b.date + 'T00:00:00').getTime() : 0);
-      return tb - ta;
-    });
+    g.dernierChantier = dernierChantier;
+    g.prochainChantier = prochainChantier;
+    g.nbCloture = g.chantiers.filter(c => (c.statut || 'en_cours') === 'cloture').length;
+    g.nbPlanifie = g.chantiers.filter(c => (c.statut || 'en_cours') === 'planifie').length;
+    g.nbEnCours = g.chantiers.filter(c => (c.statut || 'en_cours') === 'en_cours').length;
+    g.nbImpayes = g.chantiers.filter(c => (c.statut || '') === 'cloture' && c.paid === false).length;
     return g;
   });
 
   // Tri groupes par date dernière modif DESC
   groups.sort((a, b) => b.lastModified - a.lastModified);
 
-  // Init de l'état toggle (par défaut : 1 chantier → ouvert, plusieurs → fermé)
-  if (!window._chantierGroupsExpand) window._chantierGroupsExpand = {};
-
   list.innerHTML = groups.map(g => {
     const nbCh = g.chantiers.length;
-    const expandKey = g.key;
-    // Default : 1 seul chantier → expanded ; plusieurs → collapsed
-    if (typeof window._chantierGroupsExpand[expandKey] === 'undefined') {
-      window._chantierGroupsExpand[expandKey] = (nbCh === 1);
-    }
-    const isExpanded = window._chantierGroupsExpand[expandKey];
-    const chevron = isExpanded ? '▼' : '▶';
-    const safeKey = String(expandKey).replace(/'/g, "\\'");
     const nomClient = escapeHtml(g.name);
+    const margePct = g.totalRevenue > 0 ? ((g.totalProfit / g.totalRevenue) * 100) : 0;
 
-    // Header de la carte client
-    const totalsHtml = isPatronMode
-      ? `<div style="font-size:12px; color:#666;">CA: <strong>${g.totalRevenue.toFixed(2)} €</strong> · Marge: <strong>${g.totalProfit.toFixed(2)} €</strong> · ${g.totalHours.toFixed(1)} h</div>`
-      : `<div style="font-size:12px; color:#666;">${g.totalHours.toFixed(1)} h travaillées</div>`;
+    // Récupérer infos du client (adresse, tél)
+    const client = g.clientId ? data.clients.find(c => c.id === g.clientId) : null;
+    const adresseClient = client ? (client.address || '') : '';
+    const phoneClient = client ? (client.phone || '') : '';
 
-    // Liste des chantiers du groupe (visible uniquement si expanded)
-    const chantiersHtml = g.chantiers.map(ch => {
-      const s = computeChantierStats(ch);
-      const rateClass = s.effectiveHourlyRate >= target ? 'stat-ok' :
-                        s.effectiveHourlyRate >= target * 0.8 ? 'stat-warn' : 'stat-bad';
-      const varLabel = s.isBabad ? `${s.nbJours} jour(s) BABAD` :
-                       s.timeVariance > 0.1 ? `+${s.timeVariance.toFixed(1)}h` :
-                       s.timeVariance < -0.1 ? `${s.timeVariance.toFixed(1)}h` : 'OK';
-      const typeBadge = `<span class="badge-${ch.type || 'perso'}">${(ch.type || 'perso') === 'babad' ? 'BABAD' : 'Perso'}</span>`;
-      const statutBadge = `<span class="badge-${ch.statut || 'en_cours'}">${statutLabel[ch.statut || 'en_cours'] || ch.statut}</span>`;
-      const paidBadge = ((ch.statut || '') === 'cloture' && ch.paid === false)
-        ? `<span style="background:#e74c3c; color:#fff; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600;">🔴 Impayé</span>`
-        : '';
-      const showWeather = ((ch.statut || 'en_cours') === 'planifie') && ch.adresse && ch.date && isFutureOrToday(ch.date);
-      const dateAffichee = ch.date || '?';
-      const adresseHtml = ch.adresse ? ' — ' + escapeHtml(ch.adresse) : '';
-      const matHtml = (isPatronMode && ch.materialCost) ? ' — ' + ch.materialCost + '€ mat.' : '';
-      const montantInline = isPatronMode ? ` · <strong>${s.revenue.toFixed(2)} €</strong>` : '';
+    // Statuts mini
+    const statutsHtml = [];
+    if (g.nbEnCours > 0) statutsHtml.push(`<span style="background:#f39c12; color:#fff; padding:1px 7px; border-radius:10px; font-size:11px;">${g.nbEnCours} en cours</span>`);
+    if (g.nbPlanifie > 0) statutsHtml.push(`<span style="background:#95a5a6; color:#fff; padding:1px 7px; border-radius:10px; font-size:11px;">${g.nbPlanifie} planifié${g.nbPlanifie > 1 ? 's' : ''}</span>`);
+    if (g.nbCloture > 0) statutsHtml.push(`<span style="background:#27ae60; color:#fff; padding:1px 7px; border-radius:10px; font-size:11px;">${g.nbCloture} clos</span>`);
+    if (g.nbImpayes > 0) statutsHtml.push(`<span style="background:#e74c3c; color:#fff; padding:1px 7px; border-radius:10px; font-size:11px;">🔴 ${g.nbImpayes} impayé${g.nbImpayes > 1 ? 's' : ''}</span>`);
 
-      return `
-        <div class="chantier-item" style="margin-top:8px;">
-          <div class="chantier-head">
-            <div style="cursor:pointer;" onclick="viewChantier('${ch.id}')">
-              <div class="chantier-meta" style="font-weight:600; color:#333;">📅 ${dateAffichee} · ${statutBadge} ${paidBadge}${montantInline}</div>
-              <div class="chantier-badges" style="margin-top:4px;">${typeBadge}${ch.devisId ? ' <span style="font-size:11px; color:#2ecc71;">depuis devis</span>' : ''}</div>
-              <div class="chantier-meta">${ch.hours}h${matHtml}${adresseHtml}</div>
-              ${showWeather ? `<div class="weather-slot" id="weather-slot-${ch.id}" style="margin-top:5px; font-size:12px; color:#666;">🌦️ Chargement météo…</div>` : ''}
-            </div>
-            <div style="display:flex; gap:6px;">
-              <button class="btn-secondary btn-small" onclick="viewChantier('${ch.id}')">Ouvrir</button>
-              ${isPatronMode ? `<button class="btn-danger btn-small" onclick="removeChantier('${ch.id}')">Supprimer</button>` : ''}
-            </div>
-          </div>
-          ${isPatronMode ? `<div class="chantier-stats">
-            <div>CA : <strong>${s.revenue.toFixed(2)} €</strong></div>
-            <div>Marge : <strong>${s.grossProfit.toFixed(2)} €</strong></div>
-            ${!s.isBabad ? `<div>Taux effectif : <span class="${rateClass}">${s.effectiveHourlyRate.toFixed(2)} €/h</span></div>` : ''}
-            <div>${varLabel}</div>
-          </div>` : ''}
-          ${ch.notes ? `<div style="margin-top:6px; font-size:13px; color:#666; font-style:italic;">${escapeHtml(ch.notes)}</div>` : ''}
-          ${ch.prestations && ch.prestations.length > 0 ? `
-          <div style="margin-top:6px; font-size:12px; color:#888;">
-            ${ch.prestations.map(p => {
-              const it = findItemById(p.itemId);
-              return it ? `${escapeHtml(it.desc)} × ${p.qty}` : '';
-            }).filter(Boolean).join(' · ')}
-          </div>` : ''}
-        </div>
-      `;
-    }).join('');
+    // Dernière / prochaine intervention
+    const datesHtml = [];
+    if (g.dernierChantier) {
+      const statutLab = statutLabel[g.dernierChantier.statut || 'en_cours'] || '';
+      datesHtml.push(`<div style="font-size:12px; color:#666;">📅 Dernier : <strong>${escapeHtml(g.dernierChantier.date)}</strong> (${statutLab.toLowerCase()})</div>`);
+    }
+    if (g.prochainChantier) {
+      datesHtml.push(`<div style="font-size:12px; color:#3d6f28;">⏭️ Prochain : <strong>${escapeHtml(g.prochainChantier.date)}</strong></div>`);
+    }
+
+    // Stats financiers (patron uniquement)
+    const finHtml = isPatronMode
+      ? `<div style="font-size:13px; color:#444; margin-top:4px;">
+           <strong>${g.totalHours.toFixed(1)} h</strong> ·
+           <strong>${g.totalRevenue.toFixed(0)} € HT</strong> ·
+           Marge <strong>${margePct.toFixed(0)}%</strong>
+         </div>`
+      : `<div style="font-size:13px; color:#444; margin-top:4px;"><strong>${g.totalHours.toFixed(1)} h</strong> travaillées</div>`;
+
+    const onCardClick = g.clientId
+      ? `openClientFiche('${g.clientId}')`
+      : `toast('Client sans fiche')`;
 
     return `
-      <div class="chantier-group" data-group-key="${escapeHtml(expandKey)}" style="border:1px solid #d4d4d4; border-radius:8px; padding:10px 12px; margin-bottom:10px; background:#fafbf8;">
-        <div style="display:flex; justify-content:space-between; align-items:center; cursor:pointer; gap:8px;" onclick="toggleChantierGroup('${safeKey}')">
+      <div class="chantier-client-card" style="border:1px solid #d4d4d4; border-radius:8px; padding:12px 14px; margin-bottom:10px; background:#fafbf8; cursor:pointer; transition:background .15s;"
+           onclick="${onCardClick}"
+           onmouseover="this.style.background='#f0f7eb';"
+           onmouseout="this.style.background='#fafbf8';">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px; flex-wrap:wrap;">
           <div style="flex:1; min-width:0;">
-            <div style="font-weight:700; font-size:15px; color:#3d6f28;">👤 ${nomClient} <span style="color:#888; font-weight:400; font-size:13px;">— ${nbCh} chantier${nbCh > 1 ? 's' : ''}</span></div>
-            ${totalsHtml}
+            <div style="font-weight:700; font-size:16px; color:#3d6f28;">👤 ${nomClient} <span style="color:#888; font-weight:400; font-size:13px;">— ${nbCh} chantier${nbCh > 1 ? 's' : ''}</span></div>
+            ${adresseClient ? `<div style="font-size:12px; color:#666; margin-top:2px;">📍 ${escapeHtml(adresseClient)}</div>` : ''}
+            ${phoneClient ? `<div style="font-size:12px; color:#666;">📞 ${escapeHtml(phoneClient)}</div>` : ''}
+            ${statutsHtml.length > 0 ? `<div style="margin-top:6px; display:flex; gap:5px; flex-wrap:wrap;">${statutsHtml.join('')}</div>` : ''}
+            ${finHtml}
+            ${datesHtml.length > 0 ? `<div style="margin-top:5px;">${datesHtml.join('')}</div>` : ''}
           </div>
-          <div style="font-size:18px; color:#3d6f28; user-select:none;" aria-label="${isExpanded ? 'Réduire' : 'Développer'}">${chevron}</div>
-        </div>
-        <div class="chantier-group-body" style="display:${isExpanded ? 'block' : 'none'}; margin-top:8px;">
-          ${chantiersHtml}
+          <div style="display:flex; flex-direction:column; gap:5px; align-items:flex-end;">
+            ${g.clientId ? `<button class="btn-add btn-small" onclick="event.stopPropagation(); openClientFiche('${g.clientId}');" style="white-space:nowrap;">📂 Fiche complète</button>` : ''}
+          </div>
         </div>
       </div>
     `;
   }).join('');
-
-  // Lancer chargement météo pour chaque chantier planifié avec adresse + date future
-  // (on lance pour tous les chantiers filtrés ; les groupes fermés affecteront un slot inexistant — c'est ok)
-  filtered.forEach(ch => {
-    if ((ch.statut || 'en_cours') === 'planifie' && ch.adresse && ch.date && isFutureOrToday(ch.date)) {
-      // Slot rendu uniquement si groupe ouvert ; on tente quand même
-      const slot = document.getElementById('weather-slot-' + ch.id);
-      if (slot) loadWeatherIntoSlot(ch, 'weather-slot-' + ch.id);
-    }
-  });
 
   renderPrestaLines();
 }
@@ -3291,6 +3272,14 @@ function openModalAddChantier(clientId) {
 
   const body = document.getElementById('modal-add-chantier-body');
   body.innerHTML = `
+    <div style="margin-bottom:14px; padding:12px 14px; background:#f0f7eb; border:1px dashed #5ba241; border-radius:8px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+      <span style="font-size:14px; color:#3d6f28; font-weight:600;">📄 Tu as un devis signé en PDF ?</span>
+      <label class="btn-add btn-small" style="cursor:pointer; margin:0;">
+        📎 Importer le devis (auto-remplir)
+        <input type="file" accept=".pdf,image/jpeg,image/png" style="display:none;" onchange="openDevisPDFImportChantier(event)">
+      </label>
+      <span id="chantier-pdf-status" style="font-size:12px; color:#888;"></span>
+    </div>
     <div class="form-grid">
       <div class="field">
         <label>Client</label>
@@ -4196,6 +4185,12 @@ function saveClient() {
   toast("Client enregistré");
 }
 
+// Helper : navigue vers Clients + ouvre la fiche complète (utilisé depuis la liste Chantiers)
+function openClientFiche(id) {
+  showPage('clients');
+  setTimeout(() => viewClient(id), 120);
+}
+
 function viewClient(id) {
   const c = data.clients.find(c => c.id === id);
   if (!c) return;
@@ -4207,82 +4202,282 @@ function viewClient(id) {
   document.getElementById('cl-address').value = c.address || '';
   document.getElementById('cl-notes').value = c.notes || '';
 
-  const chantiers = data.chantiers.filter(ch => ch.clientId === id);
-  const devis = data.devis.filter(d => d.clientId === id);
-  let totalCA = 0, totalHeures = 0;
-  chantiers.forEach(ch => {
-    const s = computeChantierStats(ch);
-    totalCA += s.revenue; totalHeures += ch.hours;
-  });
   const detail = document.getElementById('cl-detail');
   detail.style.display = 'block';
-  document.getElementById('cl-detail-title').textContent = 'Historique : ' + c.name;
-  const statutLabel = { planifie: 'Planifié', en_cours: 'En cours', cloture: 'Clôturé' };
-  document.getElementById('cl-detail-content').innerHTML = `
-    <div class="chantier-stats" style="margin-bottom:12px;">
-      <div>${chantiers.length} chantier(s)</div>
-      <div>${devis.length} devis</div>
-      <div>CA total : <strong>${totalCA.toFixed(2)} € HT</strong></div>
-      <div>Heures : <strong>${totalHeures.toFixed(1)} h</strong></div>
-    </div>
+  document.getElementById('cl-detail-title').textContent = '👤 Fiche complète : ' + c.name;
 
-    <!-- Section Chantiers avec bouton ajout -->
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:6px;">
-      <h4 style="margin:0; color:#3d6f28;">Chantiers de ce client</h4>
-      <button class="btn-add btn-small" onclick="openModalAddChantier('${id}')">+ Nouveau chantier</button>
+  // Stocker l'ID du client courant pour le re-render des sous-onglets
+  window._currentClientFicheId = id;
+  if (typeof window._currentClientFicheTab === 'undefined') window._currentClientFicheTab = 'chantiers';
+
+  const tabBtn = (key, label) => {
+    const isActive = (window._currentClientFicheTab === key);
+    return `<button onclick="setClientFicheTab('${key}')" style="padding:8px 14px; border:none; background:${isActive ? '#3d6f28' : '#f0f0f0'}; color:${isActive ? '#fff' : '#444'}; font-weight:${isActive ? '600' : '500'}; border-radius:6px 6px 0 0; cursor:pointer; font-size:13px;">${label}</button>`;
+  };
+
+  const headerHtml = `
+    <div style="background:#f7f9f5; border-radius:10px; padding:14px 18px; margin-bottom:14px;">
+      ${c.phone ? `<div style="font-size:14px; margin-bottom:3px;">📞 <a href="tel:${escapeAttr(c.phone)}" style="color:#3d6f28; text-decoration:none;">${escapeHtml(c.phone)}</a></div>` : ''}
+      ${c.email ? `<div style="font-size:14px; margin-bottom:3px;">📧 <a href="mailto:${escapeAttr(c.email)}" style="color:#3d6f28; text-decoration:none;">${escapeHtml(c.email)}</a></div>` : ''}
+      ${c.address ? `<div style="font-size:14px;">📍 ${escapeHtml(c.address)}</div>` : ''}
     </div>
-    ${chantiers.length === 0 ? `<div style="color:#888; font-size:13px; padding:6px 0; margin-bottom:12px;">Aucun chantier pour ce client.</div>` : `
-      <div style="margin-bottom:14px;">
-        ${chantiers.slice().reverse().map(ch => {
-          const s = computeChantierStats(ch);
-          const statut = ch.statut || 'en_cours';
-          const statColors = { planifie: '#95a5a6', en_cours: '#f39c12', cloture: '#27ae60' };
-          const statColor = statColors[statut] || '#888';
-          const paidBadge = (statut === 'cloture' && ch.paid === false)
-            ? `<span style="background:#e74c3c; color:#fff; padding:1px 6px; border-radius:4px; font-size:10px; margin-left:4px;">Impayé</span>` : '';
-          return `<div style="display:flex; justify-content:space-between; align-items:center; padding:8px 12px; background:#fafcf7; border-left:3px solid ${statColor}; border-radius:0 6px 6px 0; margin-bottom:4px; gap:8px; flex-wrap:wrap;">
-            <div style="flex:1; min-width:0;">
-              <div style="font-size:13px; font-weight:600;">${escapeHtml(ch.adresse || ch.date || '?')}</div>
-              <div style="font-size:12px; color:#666;">${ch.date} · ${ch.hours}h · <strong>${s.revenue.toFixed(0)} € HT</strong>
-                <span style="background:${statColor}; color:#fff; padding:1px 6px; border-radius:4px; font-size:10px; margin-left:4px;">${statutLabel[statut] || statut}</span>${paidBadge}
+    <div style="display:flex; gap:4px; border-bottom:2px solid #3d6f28; margin-bottom:14px; flex-wrap:wrap;">
+      ${tabBtn('infos', '📋 Infos')}
+      ${tabBtn('chantiers', '🚧 Chantiers')}
+      ${tabBtn('heures', '⏱️ Heures')}
+      ${tabBtn('rentabilite', '💰 Rentabilité')}
+      ${tabBtn('archives', '📦 Archives')}
+    </div>
+    <div id="cl-fiche-tab-content"></div>
+  `;
+  document.getElementById('cl-detail-content').innerHTML = headerHtml;
+  renderClientFicheTab(id);
+  window.scrollTo({ top: detail.offsetTop - 20, behavior: 'smooth' });
+}
+
+function setClientFicheTab(tab) {
+  window._currentClientFicheTab = tab;
+  if (window._currentClientFicheId) viewClient(window._currentClientFicheId);
+}
+
+function renderClientFicheTab(id) {
+  const c = data.clients.find(c => c.id === id);
+  if (!c) return;
+  const tab = window._currentClientFicheTab || 'chantiers';
+  const target = document.getElementById('cl-fiche-tab-content');
+  if (!target) return;
+
+  const chantiers = data.chantiers.filter(ch => ch.clientId === id);
+  const devis = data.devis.filter(d => d.clientId === id);
+  const statutLabel = { planifie: 'Planifié', en_cours: 'En cours', cloture: 'Clôturé' };
+  const statColors = { planifie: '#95a5a6', en_cours: '#f39c12', cloture: '#27ae60' };
+
+  let totalCA = 0, totalProfit = 0, totalHeures = 0, totalMaterial = 0;
+  chantiers.forEach(ch => {
+    const s = computeChantierStats(ch);
+    totalCA += s.revenue;
+    totalProfit += s.grossProfit;
+    totalHeures += (ch.hours || 0);
+    totalMaterial += (ch.materialCost || 0);
+  });
+  const margePct = totalCA > 0 ? ((totalProfit / totalCA) * 100) : 0;
+  const nbCloture = chantiers.filter(c => (c.statut || '') === 'cloture').length;
+  const nbEnCours = chantiers.filter(c => (c.statut || 'en_cours') === 'en_cours').length;
+  const nbPlanifie = chantiers.filter(c => (c.statut || '') === 'planifie').length;
+
+  if (tab === 'infos') {
+    const dateCreation = c.createdAt ? new Date(c.createdAt).toLocaleDateString('fr-FR') : '—';
+    target.innerHTML = `
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:10px; margin-bottom:14px;">
+        <div style="background:#fafcf7; padding:10px 12px; border-radius:8px; border-left:3px solid #5ba241;">
+          <div style="font-size:11px; color:#888; text-transform:uppercase;">Date de création</div>
+          <div style="font-size:15px; font-weight:600; color:#444;">${dateCreation}</div>
+        </div>
+        <div style="background:#fafcf7; padding:10px 12px; border-radius:8px; border-left:3px solid #5ba241;">
+          <div style="font-size:11px; color:#888; text-transform:uppercase;">Total chantiers</div>
+          <div style="font-size:15px; font-weight:600; color:#444;">${chantiers.length} (${nbCloture} clos, ${nbEnCours} en cours, ${nbPlanifie} planifiés)</div>
+        </div>
+        <div style="background:#fafcf7; padding:10px 12px; border-radius:8px; border-left:3px solid #5ba241;">
+          <div style="font-size:11px; color:#888; text-transform:uppercase;">CA total</div>
+          <div style="font-size:15px; font-weight:600; color:#3d6f28;">${totalCA.toFixed(0)} € HT</div>
+        </div>
+        <div style="background:#fafcf7; padding:10px 12px; border-radius:8px; border-left:3px solid #5ba241;">
+          <div style="font-size:11px; color:#888; text-transform:uppercase;">Devis émis</div>
+          <div style="font-size:15px; font-weight:600; color:#444;">${devis.length}</div>
+        </div>
+      </div>
+      ${c.notes ? `<div style="background:#fff8e1; padding:10px 14px; border-radius:8px; border-left:3px solid #f39c12; margin-bottom:14px;">
+        <div style="font-size:11px; color:#888; text-transform:uppercase; margin-bottom:4px;">📝 Notes</div>
+        <div style="font-size:13px; color:#444; white-space:pre-wrap;">${escapeHtml(c.notes)}</div>
+      </div>` : ''}
+      <button class="btn-danger btn-small" onclick="deleteClient('${id}')">Supprimer le client</button>
+    `;
+    return;
+  }
+
+  if (tab === 'chantiers') {
+    // Chantiers actifs (en cours + planifiés)
+    const actifs = chantiers.filter(ch => (ch.statut || 'en_cours') !== 'cloture')
+                   .sort((a,b) => (a.date || '').localeCompare(b.date || ''));
+    target.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:6px;">
+        <h4 style="margin:0; color:#3d6f28;">Chantiers actifs (en cours + planifiés)</h4>
+        <button class="btn-add btn-small" onclick="openModalAddChantier('${id}')">+ Nouveau chantier</button>
+      </div>
+      ${actifs.length === 0 ? `<div style="color:#888; font-size:13px; padding:6px 0; margin-bottom:12px;">Aucun chantier actif. Tous sont clôturés (voir Archives).</div>` : `
+        <div style="margin-bottom:14px;">
+          ${actifs.map(ch => {
+            const s = computeChantierStats(ch);
+            const statut = ch.statut || 'en_cours';
+            const statColor = statColors[statut] || '#888';
+            const paidBadge = (statut === 'cloture' && ch.paid === false)
+              ? `<span style="background:#e74c3c; color:#fff; padding:1px 6px; border-radius:4px; font-size:10px; margin-left:4px;">Impayé</span>` : '';
+            return `<div style="display:flex; justify-content:space-between; align-items:center; padding:10px 12px; background:#fafcf7; border-left:3px solid ${statColor}; border-radius:0 6px 6px 0; margin-bottom:6px; gap:8px; flex-wrap:wrap;">
+              <div style="flex:1; min-width:0;">
+                <div style="font-size:13px; font-weight:600;">${escapeHtml(ch.adresse || ch.date || '?')}</div>
+                <div style="font-size:12px; color:#666;">📅 ${ch.date || '?'} · ${ch.hours || 0}h · <strong>${s.revenue.toFixed(0)} € HT</strong>
+                  <span style="background:${statColor}; color:#fff; padding:1px 6px; border-radius:4px; font-size:10px; margin-left:4px;">${statutLabel[statut] || statut}</span>${paidBadge}
+                </div>
               </div>
+              <button class="btn-secondary btn-small" onclick="showPage('chantiers'); setTimeout(()=>viewChantier('${ch.id}'),150);">Ouvrir</button>
+            </div>`;
+          }).join('')}
+        </div>
+      `}
+      ${devis.length > 0 ? `
+        <h4 style="margin-top:14px; margin-bottom:6px; color:#3d6f28;">Devis liés</h4>
+        ${devis.slice().reverse().map(d => `
+          <div style="padding:8px 12px; background:#fafcf7; border-radius:6px; margin-bottom:4px; font-size:13px; display:flex; justify-content:space-between; align-items:center; gap:6px; flex-wrap:wrap;">
+            <span>${escapeHtml(d.numero || '(sans N°)')} — ${escapeHtml(d.date || '')} — <strong>${(d.totalHT || 0).toFixed(2)} € HT</strong></span>
+            <button class="btn-secondary btn-small" onclick="loadDevis('${d.id}'); event.stopPropagation();">Ouvrir</button>
+          </div>
+        `).join('')}
+      ` : ''}
+    `;
+    return;
+  }
+
+  if (tab === 'heures') {
+    // Top 3 chantiers les plus chronophages
+    const sorted = chantiers.slice().filter(ch => (ch.hours || 0) > 0).sort((a,b) => (b.hours || 0) - (a.hours || 0));
+    const top3 = sorted.slice(0, 3);
+    target.innerHTML = `
+      <div style="background:#f0f7eb; padding:14px 18px; border-radius:10px; margin-bottom:14px; border-left:4px solid #3d6f28;">
+        <div style="font-size:12px; color:#888; text-transform:uppercase;">Total heures travaillées</div>
+        <div style="font-size:28px; font-weight:700; color:#3d6f28;">${totalHeures.toFixed(1)} h</div>
+        <div style="font-size:13px; color:#666; margin-top:4px;">Réparties sur ${chantiers.length} chantier${chantiers.length > 1 ? 's' : ''}</div>
+      </div>
+      ${top3.length > 0 ? `
+        <h4 style="margin:0 0 8px; color:#3d6f28;">🏆 Top 3 chantiers les plus chronophages</h4>
+        ${top3.map((ch, i) => {
+          const pct = totalHeures > 0 ? (((ch.hours || 0) / totalHeures) * 100) : 0;
+          return `<div style="background:#fafcf7; padding:10px 12px; border-radius:6px; margin-bottom:6px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+              <div style="font-weight:600; font-size:13px;">${i+1}. ${escapeHtml(ch.adresse || ch.date || '?')}</div>
+              <div style="font-size:13px; color:#3d6f28; font-weight:600;">${(ch.hours || 0).toFixed(1)} h</div>
             </div>
-            <button class="btn-secondary btn-small" onclick="showPage('chantiers'); setTimeout(()=>viewChantier('${ch.id}'),150);">Ouvrir</button>
+            <div style="background:#e0ebd5; height:6px; border-radius:3px; overflow:hidden;">
+              <div style="background:#5ba241; height:100%; width:${pct.toFixed(1)}%;"></div>
+            </div>
+            <div style="font-size:11px; color:#888; margin-top:3px;">${pct.toFixed(0)}% du total</div>
           </div>`;
         }).join('')}
-      </div>
-    `}
+      ` : '<div style="color:#888; font-size:13px;">Aucune heure renseignée pour ce client.</div>'}
+      ${chantiers.length > 0 ? `
+        <h4 style="margin-top:18px; margin-bottom:8px; color:#3d6f28;">Détail par chantier</h4>
+        ${chantiers.slice().sort((a,b) => (b.date || '').localeCompare(a.date || '')).map(ch => `
+          <div style="display:flex; justify-content:space-between; padding:6px 12px; background:#fafcf7; border-radius:4px; margin-bottom:3px; font-size:12px;">
+            <span>${ch.date || '?'} — ${escapeHtml(ch.adresse || '?')}</span>
+            <strong>${(ch.hours || 0).toFixed(1)} h</strong>
+          </div>
+        `).join('')}
+      ` : ''}
+    `;
+    return;
+  }
 
-    ${devis.length > 0 ? `
-      <h4 style="margin-top:14px; margin-bottom:6px;">Devis</h4>
-      ${devis.slice().reverse().map(d => `
-        <div style="padding:6px 10px; background:#fafcf7; border-radius:4px; margin-bottom:4px; font-size:13px; display:flex; justify-content:space-between;">
-          <span>${d.numero || '(sans N°)'} — ${d.date} — <strong>${d.totalHT.toFixed(2)} € HT</strong></span>
-          <button class="btn-secondary btn-small" onclick="loadDevis('${d.id}'); event.stopPropagation();">Ouvrir</button>
+  if (tab === 'rentabilite') {
+    const margeMoy = chantiers.length > 0 ? (totalProfit / chantiers.length) : 0;
+    // Bar chart simple : marge par chantier (clos uniquement)
+    const closSorted = chantiers.filter(c => (c.statut || '') === 'cloture').slice().sort((a,b) => (a.date || '').localeCompare(b.date || ''));
+    const maxMarge = closSorted.reduce((m, ch) => Math.max(m, computeChantierStats(ch).grossProfit), 0);
+    target.innerHTML = `
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:10px; margin-bottom:14px;">
+        <div style="background:#f0f7eb; padding:12px 14px; border-radius:8px; border-left:4px solid #3d6f28;">
+          <div style="font-size:11px; color:#888; text-transform:uppercase;">CA total HT</div>
+          <div style="font-size:22px; font-weight:700; color:#3d6f28;">${totalCA.toFixed(0)} €</div>
         </div>
-      `).join('')}
-    ` : ''}
-    <div style="margin-top:14px; padding:12px; background:#f0f7eb; border-left:3px solid #5ba241; border-radius:0 6px 6px 0;">
-      <div style="font-weight:600; color:#3d6f28; margin-bottom:6px;">Rapport annuel pour ce client</div>
-      <p style="font-size:12px; color:#666; margin:4px 0 8px;">
-        Genere un PDF "bilan de l'annee" avec les chantiers + photos. Idéal pour fideliser !
-      </p>
-      <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
-        <select id="rapport-annuel-year-${id}" style="padding:5px 10px; border:1px solid #d4d4d4; border-radius:4px;">
-          ${(() => {
-            const cy = new Date().getFullYear();
-            const years = new Set([cy]);
-            chantiers.forEach(ch => { const y = (ch.date || '').slice(0,4); if (y) years.add(y); });
-            return Array.from(years).sort((a,b) => b - a).map(y => `<option value="${y}">${y}</option>`).join('');
-          })()}
-        </select>
-        <button class="btn-add btn-small" onclick="printRapportAnnuelClient('${id}', document.getElementById('rapport-annuel-year-${id}').value)">Generer le rapport PDF</button>
+        <div style="background:#f0f7eb; padding:12px 14px; border-radius:8px; border-left:4px solid #5ba241;">
+          <div style="font-size:11px; color:#888; text-transform:uppercase;">Marge totale</div>
+          <div style="font-size:22px; font-weight:700; color:#3d6f28;">${totalProfit.toFixed(0)} €</div>
+          <div style="font-size:13px; color:#666;">${margePct.toFixed(0)}% du CA</div>
+        </div>
+        <div style="background:#fafcf7; padding:12px 14px; border-radius:8px; border-left:4px solid #95a5a6;">
+          <div style="font-size:11px; color:#888; text-transform:uppercase;">Marge moyenne / chantier</div>
+          <div style="font-size:22px; font-weight:700; color:#444;">${margeMoy.toFixed(0)} €</div>
+        </div>
+        <div style="background:#fafcf7; padding:12px 14px; border-radius:8px; border-left:4px solid #95a5a6;">
+          <div style="font-size:11px; color:#888; text-transform:uppercase;">Coût matériel total</div>
+          <div style="font-size:22px; font-weight:700; color:#444;">${totalMaterial.toFixed(0)} €</div>
+        </div>
       </div>
-    </div>
+      ${closSorted.length > 0 ? `
+        <h4 style="margin:0 0 10px; color:#3d6f28;">📊 Évolution de la marge (chantiers clôturés)</h4>
+        <div style="background:#fafcf7; padding:14px; border-radius:8px;">
+          ${closSorted.map(ch => {
+            const s = computeChantierStats(ch);
+            const pct = maxMarge > 0 ? ((s.grossProfit / maxMarge) * 100) : 0;
+            const barColor = s.grossProfit >= 0 ? '#5ba241' : '#e74c3c';
+            return `<div style="margin-bottom:8px;">
+              <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:3px;">
+                <span style="color:#666;">${ch.date || '?'} · ${escapeHtml((ch.adresse || '').slice(0, 30))}${(ch.adresse || '').length > 30 ? '…' : ''}</span>
+                <strong style="color:${barColor};">${s.grossProfit.toFixed(0)} €</strong>
+              </div>
+              <div style="background:#e0ebd5; height:14px; border-radius:3px; overflow:hidden;">
+                <div style="background:${barColor}; height:100%; width:${Math.max(pct, 2).toFixed(1)}%;"></div>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
+      ` : '<div style="color:#888; font-size:13px;">Aucun chantier clôturé pour calculer la rentabilité historique.</div>'}
+    `;
+    return;
+  }
 
-    <button class="btn-danger btn-small" style="margin-top:12px;" onclick="deleteClient('${id}')">Supprimer le client</button>
-  `;
-  window.scrollTo({ top: detail.offsetTop - 20, behavior: 'smooth' });
+  if (tab === 'archives') {
+    const clos = chantiers.filter(ch => (ch.statut || '') === 'cloture')
+                 .sort((a,b) => (b.date || '').localeCompare(a.date || ''));
+    // Galerie photos : toutes les photos de tous les chantiers du client
+    const allPhotos = [];
+    chantiers.forEach(ch => {
+      (ch.photos || []).forEach(ph => allPhotos.push({ ph, ch }));
+    });
+    target.innerHTML = `
+      <h4 style="margin:0 0 8px; color:#3d6f28;">Chantiers clôturés (${clos.length})</h4>
+      ${clos.length === 0 ? `<div style="color:#888; font-size:13px; padding:6px 0;">Aucun chantier clôturé pour ce client.</div>` : `
+        <div style="margin-bottom:14px;">
+          ${clos.map(ch => {
+            const s = computeChantierStats(ch);
+            const paidBadge = (ch.paid === false)
+              ? `<span style="background:#e74c3c; color:#fff; padding:1px 6px; border-radius:4px; font-size:10px; margin-left:4px;">Impayé</span>` : '';
+            return `<div style="display:flex; justify-content:space-between; align-items:center; padding:8px 12px; background:#fafcf7; border-left:3px solid #27ae60; border-radius:0 6px 6px 0; margin-bottom:4px; gap:8px; flex-wrap:wrap;">
+              <div style="flex:1; min-width:0;">
+                <div style="font-size:13px; font-weight:600;">${escapeHtml(ch.adresse || ch.date || '?')}</div>
+                <div style="font-size:12px; color:#666;">📅 ${ch.date || '?'} · ${(ch.hours || 0)}h · <strong>${s.revenue.toFixed(0)} € HT</strong>${paidBadge}</div>
+              </div>
+              <button class="btn-secondary btn-small" onclick="showPage('chantiers'); setTimeout(()=>viewChantier('${ch.id}'),150);">Ouvrir</button>
+            </div>`;
+          }).join('')}
+        </div>
+      `}
+      ${allPhotos.length > 0 ? `
+        <h4 style="margin-top:18px; margin-bottom:10px; color:#3d6f28;">📷 Galerie photos (${allPhotos.length})</h4>
+        <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(110px, 1fr)); gap:8px; margin-bottom:14px;">
+          ${allPhotos.map(p => `<div style="aspect-ratio:1; overflow:hidden; border-radius:6px; background:#eee;">
+            <img src="${p.ph.dataUrl}" alt="" style="width:100%; height:100%; object-fit:cover; cursor:pointer;" onclick="showPage('chantiers'); setTimeout(()=>viewChantier('${p.ch.id}'),150);" title="${escapeAttr(p.ch.adresse || p.ch.date || '')}">
+          </div>`).join('')}
+        </div>
+      ` : ''}
+      <div style="margin-top:14px; padding:12px; background:#f0f7eb; border-left:3px solid #5ba241; border-radius:0 6px 6px 0;">
+        <div style="font-weight:600; color:#3d6f28; margin-bottom:6px;">📊 Rapport annuel pour ce client</div>
+        <p style="font-size:12px; color:#666; margin:4px 0 8px;">
+          Génère un PDF "bilan de l'année" avec les chantiers + photos. Idéal pour fidéliser !
+        </p>
+        <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+          <select id="rapport-annuel-year-${id}" style="padding:5px 10px; border:1px solid #d4d4d4; border-radius:4px;">
+            ${(() => {
+              const cy = new Date().getFullYear();
+              const years = new Set([cy]);
+              chantiers.forEach(ch => { const y = (ch.date || '').slice(0,4); if (y) years.add(y); });
+              return Array.from(years).sort((a,b) => b - a).map(y => `<option value="${y}">${y}</option>`).join('');
+            })()}
+          </select>
+          <button class="btn-add btn-small" onclick="printRapportAnnuelClient('${id}', document.getElementById('rapport-annuel-year-${id}').value)">Générer le rapport PDF</button>
+        </div>
+      </div>
+    `;
+    return;
+  }
 }
 
 function printRapportAnnuelClient(clientId, year) {
@@ -6333,29 +6528,38 @@ function applyDevisPDFToChantierForm() {
   const editedDate     = g('date');
   const editedMontant  = parseFloat(g('montantHT')) || 0;
 
+  // Détecter si la modal "Nouveau chantier" est ouverte → on remplit modal-new-*
+  // Sinon, on remplit l'ancien formulaire inline new-*
+  const modalAdd = document.getElementById('modal-add-chantier');
+  const isModalOpen = modalAdd && modalAdd.style.display && modalAdd.style.display !== 'none';
+  const prefix = isModalOpen ? 'modal-new-' : 'new-';
+  const getEl = (suffix) => document.getElementById(prefix + suffix);
+
   // Remplir le formulaire chantier (ne pas écraser ce qu'Alex a déjà saisi)
-  const clientInput = document.getElementById('new-client');
-  if (editedClient && !clientInput.value.trim()) clientInput.value = editedClient;
+  const clientInput = getEl('client');
+  if (clientInput && editedClient && !clientInput.value.trim()) clientInput.value = editedClient;
 
-  const adresseInput = document.getElementById('new-adresse');
-  if (editedAddress && !adresseInput.value.trim()) adresseInput.value = editedAddress;
+  const adresseInput = getEl('adresse');
+  if (adresseInput && editedAddress && !adresseInput.value.trim()) adresseInput.value = editedAddress;
 
-  const dateInput = document.getElementById('new-date');
-  if (editedDate && !dateInput.value) dateInput.value = editedDate;
+  const dateInput = getEl('date');
+  if (dateInput && editedDate && !dateInput.value) dateInput.value = editedDate;
 
-  const montantInput = document.getElementById('new-montantHT');
-  if (editedMontant > 0 && !montantInput.value) montantInput.value = editedMontant.toFixed(2);
+  const montantInput = getEl('montantHT');
+  if (montantInput && editedMontant > 0 && !montantInput.value) montantInput.value = editedMontant.toFixed(2);
 
-  const materielInput = document.getElementById('new-materiel-prevu');
-  if (d.materielLibre && !materielInput.value.trim()) materielInput.value = d.materielLibre;
+  const materielInput = getEl('materiel-prevu');
+  if (materielInput && d.materielLibre && !materielInput.value.trim()) materielInput.value = d.materielLibre;
 
-  const notesInput = document.getElementById('new-notes');
+  const notesInput = getEl('notes');
   const noteImport = `Devis importe depuis ${d.fileName}`;
-  if (!notesInput.value.trim()) notesInput.value = noteImport;
-  else if (!notesInput.value.includes('importe depuis')) notesInput.value += '\n' + noteImport;
+  if (notesInput) {
+    if (!notesInput.value.trim()) notesInput.value = noteImport;
+    else if (!notesInput.value.includes('importe depuis')) notesInput.value += '\n' + noteImport;
+  }
 
   // --- Upsert client dans data.clients ---
-  const nomFinal = editedClient || clientInput.value.trim();
+  const nomFinal = editedClient || (clientInput ? clientInput.value.trim() : '');
   if (nomFinal) {
     // Matching tolérant : casse + espaces
     const normalize = s => s.toLowerCase().replace(/\s+/g, ' ').trim();
