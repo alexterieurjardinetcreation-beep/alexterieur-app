@@ -3096,7 +3096,7 @@ function renderChantiers() {
           ${opt('en_cours', '🟧 En cours')}
           ${opt('cloture', '✅ Réalisé')}
         </select>
-        ${g.clientId ? `<button class="btn-add btn-small" onclick="event.stopPropagation(); openClientFiche('${g.clientId}');" style="white-space:nowrap;">📂 Fiche</button>` : ''}
+        ${g.clientId ? `<button class="btn-secondary btn-small" onclick="event.stopPropagation(); openClientFiche('${g.clientId}');" style="white-space:nowrap;" title="Fiche client (carnet)">👤 Client</button>` : ''}
         <button onclick="event.stopPropagation(); chantierListeDelete('${singleCh.id}');" title="Supprimer ce chantier" style="padding:5px 9px; border:1px solid #e74c3c; background:#fff; color:#e74c3c; border-radius:5px; cursor:pointer; font-size:13px;">🗑️</button>
       `;
     } else {
@@ -3109,12 +3109,15 @@ function renderChantiers() {
           <option value="en_cours">🟧 Tous → En cours</option>
           <option value="cloture">✅ Tous → Réalisé</option>
         </select>
-        ${g.clientId ? `<button class="btn-add btn-small" onclick="event.stopPropagation(); openClientFiche('${g.clientId}');" style="white-space:nowrap;">📂 Fiche</button>` : ''}
+        ${g.clientId ? `<button class="btn-secondary btn-small" onclick="event.stopPropagation(); openClientFiche('${g.clientId}');" style="white-space:nowrap;" title="Fiche client (carnet)">👤 Client</button>` : ''}
         <button onclick="event.stopPropagation(); chantierListeDeleteGroup('${allIds}', '${escapeAttr(g.name)}');" title="Supprimer TOUS les chantiers de ce client" style="padding:5px 9px; border:1px solid #e74c3c; background:#fff; color:#e74c3c; border-radius:5px; cursor:pointer; font-size:13px;">🗑️ Tout</button>
       `;
     }
 
-    const onCardClick = g.clientId ? `openClientFiche('${g.clientId}')` : `toast('Client sans fiche')`;
+    // Click sur la carte : si 1 chantier → fiche chantier détaillée ; sinon fiche client
+    const onCardClick = singleCh
+      ? `viewChantier('${singleCh.id}')`
+      : (g.clientId ? `openClientFiche('${g.clientId}')` : `toast('Client sans fiche')`);
 
     return `
       <div class="chantier-client-card" style="border:1px solid #d4d4d4; border-radius:8px; padding:12px 14px; margin-bottom:10px; background:#fafbf8; cursor:pointer; transition:background .15s;"
