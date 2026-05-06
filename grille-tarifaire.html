@@ -8224,10 +8224,9 @@ function renderAchatsTable(ch) {
   `;
 }
 
-// ============ Rentabilité par prestation (taille de haie 70 ml, etc.) ============
+// ============ Calculateur de prix par prestation (taille de haie au mètre, etc.) ============
 
 function _chantierGetCoutHeure() {
-  // Calcul du coût horaire basé sur le seuil de rentabilité (Comptabilité)
   let seuilJour = 0;
   try {
     if (typeof computeComptaTotals === 'function' && data.comptabilite) {
@@ -8242,22 +8241,33 @@ function renderChantierRentabPresta(ch) {
   if (!isPatron()) return '';
   const { seuilJour, heuresJour, coutHeure } = _chantierGetCoutHeure();
   const lignes = ch.rentabilitePrestations || [];
-  const ca = (ch.montantHT && ch.montantHT > 0) ? ch.montantHT : 0;
 
-  let totalHeures = 0, totalMatos = 0, totalCout = 0;
+  // Tarif journalier visé pour ce chantier (objectif au-dessus du seuil)
+  const tarifJour = (ch.tarifJourPresta != null) ? parseFloat(ch.tarifJourPresta) : (data.settings?.tarifJourPresta || 800);
+  const tarifHeure = tarifJour / heuresJour;
+
+  let totalHeures = 0, totalPrixVente = 0, totalCout = 0;
   const rows = lignes.map((l, i) => {
-    const heures = parseFloat(l.heures) || 0;
     const qty = parseFloat(l.qty) || 0;
-    const coutMatos = parseFloat(l.coutMatos) || 0;
+    const cadence = parseFloat(l.cadence) || 0; // unités/heure
+    const heuresAuto = cadence > 0 ? (qty / cadence) : 0;
+    const heures = heuresAuto;
+    const jours = heures / heuresJour;
+    // Prix HT : soit saisi manuellement (priorité), soit calculé selon tarifJour
+    const prixSaisi = (l.prixHT != null && l.prixHT !== '') ? (parseFloat(l.prixHT) || 0) : null;
+    const prixCalcule = heures * tarifHeure;
+    const prixVenteTotal = (prixSaisi !== null) ? prixSaisi : prixCalcule;
+    const prixUnitaire = qty > 0 ? prixVenteTotal / qty : 0;
+    const tauxHoraireEquiv = heures > 0 ? prixVenteTotal / heures : 0;
     const coutMO = heures * coutHeure;
-    const coutTotal = coutMO + coutMatos;
-    const prixUnit = qty > 0 ? coutTotal / qty : 0;
+
     totalHeures += heures;
-    totalMatos += coutMatos;
-    totalCout += coutTotal;
-    return { l, i, heures, qty, coutMatos, coutMO, coutTotal, prixUnit };
+    totalPrixVente += prixVenteTotal;
+    totalCout += coutMO;
+    return { l, i, qty, cadence, heures, jours, prixVenteTotal, prixUnitaire, prixSaisi, tauxHoraireEquiv, coutMO };
   });
 
+  const ca = (ch.montantHT && ch.montantHT > 0) ? ch.montantHT : totalPrixVente;
   const margeChantier = ca - totalCout;
   const margePct = ca > 0 ? (margeChantier / ca) * 100 : 0;
   const margeColor = margePct >= 25 ? '#27ae60' : margePct >= 10 ? '#e67e22' : '#e74c3c';
@@ -8265,81 +8275,102 @@ function renderChantierRentabPresta(ch) {
   return `
     <div style="margin-top:14px; padding:14px 16px; background:#fff; border:1px solid #e0e6d8; border-radius:10px;">
       <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:8px;">
-        <h3 style="margin:0; color:#3d6f28;">📊 Rentabilité par prestation</h3>
+        <h3 style="margin:0; color:#3d6f28;">💡 Calcul prix de vente par prestation</h3>
         <button class="btn-add btn-small" onclick="addChantierRentabLine('${ch.id}')">+ Ajouter une prestation</button>
       </div>
-      ${seuilJour > 0
-        ? `<div style="background:#f7f9f5; padding:8px 12px; border-radius:6px; margin-bottom:10px; font-size:12px; color:#666;">
-            🎯 Ton seuil de rentabilité : <strong style="color:#3d6f28;">${seuilJour.toFixed(2)} €/jour</strong>
-            · Coût/heure : <strong style="color:#3d6f28;">${coutHeure.toFixed(2)} €/h</strong>
-            <span style="color:#888;">(base ${heuresJour}h/jour ouvré)</span>
-          </div>`
-        : `<div style="background:#fff8e1; padding:8px 12px; border-radius:6px; margin-bottom:10px; font-size:12px; color:#b35900;">
-            ⚠️ Renseigne tes charges dans l'onglet <strong>Comptabilité</strong> pour calculer le seuil de rentabilité automatiquement.
-          </div>`}
+
+      <!-- Tarif journalier visé -->
+      <div style="background:#f0f7eb; padding:10px 12px; border-radius:6px; margin-bottom:10px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <span style="font-size:12px; color:#666;">🎯 Mon objectif</span>
+        <input type="number" step="10" value="${tarifJour}"
+               onchange="updateChantierTarifJour('${ch.id}', parseFloat(this.value) || 0)"
+               style="padding:5px 8px; border:1px solid #d4d4d4; border-radius:4px; width:90px; font-weight:700; color:#3d6f28; text-align:right; font-size:14px;">
+        <span style="font-size:12px; color:#666;">€/jour HT (= ${tarifHeure.toFixed(0)} €/h sur ${heuresJour}h)</span>
+        ${seuilJour > 0
+          ? `<span style="font-size:11px; color:#888; margin-left:auto;">Ton seuil : ${seuilJour.toFixed(0)} €/jour minimum</span>`
+          : ''}
+      </div>
+
+      <div style="background:#fffaf0; padding:8px 12px; border-radius:6px; margin-bottom:10px; font-size:12px; color:#666; border-left:3px solid #e67e22;">
+        💡 <strong>2 façons d'utiliser :</strong>
+        <strong>(A)</strong> Saisis cadence → l'app calcule le prix selon ${tarifJour}€/jour.
+        <strong>(B)</strong> Saisis ton <strong>prix HT total</strong> (ex: 800€ pour 70 ml) → l'app calcule le prix au mètre (= 11,42 €/ml).
+      </div>
+
       ${lignes.length === 0
-        ? `<div style="color:#888; font-style:italic; padding:8px 0;">Aucune prestation. Clique "+ Ajouter une prestation" pour saisir ex: "Taille de haies" / 70 ml / 5h.</div>`
+        ? `<div style="color:#888; font-style:italic; padding:8px 0;">Aucune prestation. Clique "+ Ajouter une prestation".</div>`
         : `<div style="overflow-x:auto;">
-          <table style="width:100%; border-collapse:collapse; font-size:13px; min-width:680px;">
+          <table style="width:100%; border-collapse:collapse; font-size:13px; min-width:780px;">
             <thead>
               <tr style="background:#f5f5f5;">
-                <th style="padding:6px; border:1px solid #ddd; text-align:left; min-width:140px;">Prestation</th>
-                <th style="padding:6px; border:1px solid #ddd; width:75px;">Qté</th>
-                <th style="padding:6px; border:1px solid #ddd; width:65px;">Unité</th>
-                <th style="padding:6px; border:1px solid #ddd; width:75px;">Heures</th>
-                <th style="padding:6px; border:1px solid #ddd; width:90px;">Matériel €</th>
-                <th style="padding:6px; border:1px solid #ddd; width:90px; background:#fff8e1;">Coût total</th>
-                <th style="padding:6px; border:1px solid #ddd; width:115px; background:#eaf4e3;">Prix de revient/unité</th>
+                <th style="padding:6px; border:1px solid #ddd; text-align:left; min-width:130px;">Prestation</th>
+                <th style="padding:6px; border:1px solid #ddd; width:70px;">Quantité</th>
+                <th style="padding:6px; border:1px solid #ddd; width:55px;">Unité</th>
+                <th style="padding:6px; border:1px solid #ddd; width:75px;" title="Combien d'unités tu fais en 1h">Cadence (u/h)</th>
+                <th style="padding:6px; border:1px solid #ddd; width:65px; background:#fff8e1;">Heures</th>
+                <th style="padding:6px; border:1px solid #ddd; width:95px; background:#eaf4e3;" title="Saisis le prix que tu veux facturer (laisse vide pour calcul auto)">Prix HT total</th>
+                <th style="padding:6px; border:1px solid #ddd; width:115px; background:#eaf4e3;">Prix HT / unité</th>
+                <th style="padding:6px; border:1px solid #ddd; width:75px;" title="Tarif horaire équivalent">€/h équiv.</th>
                 <th style="padding:6px; border:1px solid #ddd; width:38px;"></th>
               </tr>
             </thead>
             <tbody>
-              ${rows.map(r => `
+              ${rows.map(r => {
+                const isManual = (r.prixSaisi !== null);
+                const tauxColor = r.tauxHoraireEquiv >= tarifHeure ? '#27ae60' : (r.tauxHoraireEquiv >= coutHeure ? '#e67e22' : '#e74c3c');
+                return `
                 <tr>
                   <td style="padding:3px; border:1px solid #ddd;">
                     <input type="text" value="${escapeAttr(r.l.desc || '')}" oninput="updateChantierRentabLineNoRender('${ch.id}', ${r.i}, 'desc', this.value)" placeholder="Taille de haies" style="width:100%; padding:5px 7px; border:1px solid #ddd; border-radius:4px; font-size:13px;">
                   </td>
                   <td style="padding:3px; border:1px solid #ddd;">
-                    <input type="number" step="0.1" value="${r.qty || ''}" onchange="updateChantierRentabLine('${ch.id}', ${r.i}, 'qty', parseFloat(this.value) || 0)" style="width:100%; padding:5px 7px; border:1px solid #ddd; border-radius:4px; font-size:13px; text-align:right;">
+                    <input type="number" step="0.1" value="${r.qty || ''}" onchange="updateChantierRentabLine('${ch.id}', ${r.i}, 'qty', parseFloat(this.value) || 0)" placeholder="70" style="width:100%; padding:5px 7px; border:1px solid #ddd; border-radius:4px; font-size:13px; text-align:right;">
                   </td>
                   <td style="padding:3px; border:1px solid #ddd;">
                     <input type="text" value="${escapeAttr(r.l.unit || '')}" oninput="updateChantierRentabLineNoRender('${ch.id}', ${r.i}, 'unit', this.value)" placeholder="ml" style="width:100%; padding:5px 7px; border:1px solid #ddd; border-radius:4px; font-size:13px;">
                   </td>
                   <td style="padding:3px; border:1px solid #ddd;">
-                    <input type="number" step="0.25" value="${r.heures || ''}" onchange="updateChantierRentabLine('${ch.id}', ${r.i}, 'heures', parseFloat(this.value) || 0)" style="width:100%; padding:5px 7px; border:1px solid #ddd; border-radius:4px; font-size:13px; text-align:right;">
+                    <input type="number" step="0.5" value="${r.cadence || ''}" onchange="updateChantierRentabLine('${ch.id}', ${r.i}, 'cadence', parseFloat(this.value) || 0)" placeholder="5" style="width:100%; padding:5px 7px; border:1px solid #ddd; border-radius:4px; font-size:13px; text-align:right;">
                   </td>
-                  <td style="padding:3px; border:1px solid #ddd;">
-                    <input type="number" step="0.01" value="${r.coutMatos || ''}" onchange="updateChantierRentabLine('${ch.id}', ${r.i}, 'coutMatos', parseFloat(this.value) || 0)" style="width:100%; padding:5px 7px; border:1px solid #ddd; border-radius:4px; font-size:13px; text-align:right;">
+                  <td style="padding:6px; border:1px solid #ddd; text-align:right; background:#fff8e1; font-weight:600;">${r.heures > 0 ? r.heures.toFixed(1) + ' h' : '—'}</td>
+                  <td style="padding:3px; border:1px solid #ddd; background:#eaf4e3;">
+                    <input type="number" step="1" value="${r.l.prixHT != null && r.l.prixHT !== '' ? r.l.prixHT : ''}" onchange="updateChantierRentabLine('${ch.id}', ${r.i}, 'prixHT', this.value === '' ? null : (parseFloat(this.value) || 0))" placeholder="${r.heures > 0 ? Math.round(r.heures*tarifHeure) : 'auto'}" style="width:100%; padding:5px 7px; border:1px solid ${isManual ? '#3d6f28' : '#ddd'}; border-radius:4px; font-size:13px; text-align:right; font-weight:${isManual ? '700' : '400'}; background:${isManual ? '#fff' : '#f9fdf6'};">
                   </td>
-                  <td style="padding:6px; border:1px solid #ddd; text-align:right; background:#fff8e1; font-weight:600;">${r.coutTotal.toFixed(2)} €</td>
-                  <td style="padding:6px; border:1px solid #ddd; text-align:right; background:#eaf4e3; font-weight:600; color:#3d6f28;">${r.qty > 0 ? r.prixUnit.toFixed(2) + ' €/' + (r.l.unit || '?') : '—'}</td>
+                  <td style="padding:6px; border:1px solid #ddd; text-align:right; background:#eaf4e3; font-weight:700; color:#3d6f28; font-size:14px;">${r.prixUnitaire > 0 ? r.prixUnitaire.toFixed(2) + ' €/' + (r.l.unit || 'u') : '—'}</td>
+                  <td style="padding:6px; border:1px solid #ddd; text-align:right; font-weight:600; color:${tauxColor};">${r.tauxHoraireEquiv > 0 ? r.tauxHoraireEquiv.toFixed(0) + ' €/h' : '—'}</td>
                   <td style="padding:3px; border:1px solid #ddd; text-align:center;"><button onclick="removeChantierRentabLine('${ch.id}', ${r.i})" style="background:none; border:none; color:#e74c3c; cursor:pointer; font-size:14px;" title="Supprimer">✕</button></td>
-                </tr>
-              `).join('')}
-              <tr style="background:#fafcf7; font-weight:600;">
+                </tr>`;
+              }).join('')}
+              <tr style="background:#fafcf7; font-weight:700;">
                 <td style="padding:8px; border:1px solid #ddd;">TOTAL</td>
-                <td style="padding:8px; border:1px solid #ddd;"></td>
-                <td style="padding:8px; border:1px solid #ddd;"></td>
-                <td style="padding:8px; border:1px solid #ddd; text-align:right;">${totalHeures.toFixed(2)} h</td>
-                <td style="padding:8px; border:1px solid #ddd; text-align:right;">${totalMatos.toFixed(2)} €</td>
-                <td style="padding:8px; border:1px solid #ddd; text-align:right; background:#fff8e1; color:#e67e22;">${totalCout.toFixed(2)} €</td>
-                <td style="padding:8px; border:1px solid #ddd;"></td>
+                <td colspan="3" style="padding:8px; border:1px solid #ddd;"></td>
+                <td style="padding:8px; border:1px solid #ddd; text-align:right; background:#fff8e1;">${totalHeures.toFixed(2)} h</td>
+                <td style="padding:8px; border:1px solid #ddd; text-align:right; background:#eaf4e3; color:#3d6f28; font-size:14px;">${totalPrixVente.toFixed(2)} €</td>
+                <td colspan="2" style="padding:8px; border:1px solid #ddd;"></td>
                 <td></td>
               </tr>
             </tbody>
           </table>
         </div>
 
-        <!-- Récap marge globale du chantier -->
+        <!-- Récap : prix calculé vs prix vendu réel -->
         <div style="margin-top:12px; display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:8px;">
-          <div style="padding:10px 12px; background:#f0f7eb; border-left:3px solid #3d6f28; border-radius:0 6px 6px 0;">
-            <div style="font-size:11px; color:#666; text-transform:uppercase;">CA chantier</div>
+          <div style="padding:10px 12px; background:#eaf4e3; border-left:3px solid #3d6f28; border-radius:0 6px 6px 0;">
+            <div style="font-size:11px; color:#666; text-transform:uppercase;">Prix HT calculé</div>
+            <div style="font-size:18px; font-weight:700; color:#3d6f28;">${totalPrixVente.toFixed(2)} €</div>
+            <div style="font-size:11px; color:#888;">selon ${tarifJour}€/jour</div>
+          </div>
+          <div style="padding:10px 12px; background:#f0f7eb; border-left:3px solid #5ba241; border-radius:0 6px 6px 0;">
+            <div style="font-size:11px; color:#666; text-transform:uppercase;">Prix vendu réel</div>
             <div style="font-size:18px; font-weight:700; color:#3d6f28;">${ca.toFixed(2)} €</div>
+            ${ca > 0 && totalPrixVente > 0
+              ? `<div style="font-size:11px; color:${ca >= totalPrixVente ? '#27ae60' : '#e67e22'};">${ca >= totalPrixVente ? '✓' : '⚠'} ${(((ca/totalPrixVente)-1)*100).toFixed(0)}% vs calculé</div>`
+              : ''}
           </div>
           <div style="padding:10px 12px; background:#fff8e1; border-left:3px solid #e67e22; border-radius:0 6px 6px 0;">
-            <div style="font-size:11px; color:#666; text-transform:uppercase;">Coût total</div>
+            <div style="font-size:11px; color:#666; text-transform:uppercase;">Coût (charges)</div>
             <div style="font-size:18px; font-weight:700; color:#e67e22;">${totalCout.toFixed(2)} €</div>
-            <div style="font-size:11px; color:#888;">MO + matériel</div>
+            <div style="font-size:11px; color:#888;">${totalHeures.toFixed(1)}h × ${coutHeure.toFixed(0)}€/h</div>
           </div>
           <div style="padding:10px 12px; background:#fff; border-left:3px solid ${margeColor}; border-radius:0 6px 6px 0;">
             <div style="font-size:11px; color:#666; text-transform:uppercase;">Marge nette</div>
@@ -8355,7 +8386,7 @@ function addChantierRentabLine(chId) {
   const ch = data.chantiers.find(c => c.id === chId);
   if (!ch) return;
   if (!ch.rentabilitePrestations) ch.rentabilitePrestations = [];
-  ch.rentabilitePrestations.push({ desc: '', qty: 0, unit: 'ml', heures: 0, coutMatos: 0 });
+  ch.rentabilitePrestations.push({ desc: '', qty: 0, unit: 'ml', cadence: 0 });
   saveData();
   renderChantierDetail(ch);
 }
@@ -8368,7 +8399,7 @@ function updateChantierRentabLine(chId, idx, field, value) {
   renderChantierDetail(ch);
 }
 
-// Pour les inputs texte (desc, unit) : pas de re-render à chaque touche, juste sauvegarde
+// Pour les inputs texte (desc, unit) : pas de re-render à chaque touche
 function updateChantierRentabLineNoRender(chId, idx, field, value) {
   const ch = data.chantiers.find(c => c.id === chId);
   if (!ch || !ch.rentabilitePrestations || !ch.rentabilitePrestations[idx]) return;
@@ -8380,6 +8411,17 @@ function removeChantierRentabLine(chId, idx) {
   const ch = data.chantiers.find(c => c.id === chId);
   if (!ch || !ch.rentabilitePrestations) return;
   ch.rentabilitePrestations.splice(idx, 1);
+  saveData();
+  renderChantierDetail(ch);
+}
+
+function updateChantierTarifJour(chId, value) {
+  const ch = data.chantiers.find(c => c.id === chId);
+  if (!ch) return;
+  ch.tarifJourPresta = value;
+  // Stocker aussi globalement comme valeur par défaut pour les futurs chantiers
+  if (!data.settings) data.settings = {};
+  data.settings.tarifJourPresta = value;
   saveData();
   renderChantierDetail(ch);
 }
