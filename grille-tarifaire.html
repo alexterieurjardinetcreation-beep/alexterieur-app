@@ -6447,54 +6447,89 @@ async function parseDevisPDFForChantier(file) {
 
   const parsed = parseInvoiceText(text);
 
-  // Calcul du total HT depuis les items parsés
+  // Total HT depuis les items
   const totalFromLines = parsed.items.reduce((s, it) => s + (it.total || (it.qty * it.unitPrice) || 0), 0);
 
-  // Tentative de détection d'un total HT explicite dans le texte brut
-  // Cherche : "Total HT", "Montant HT", "HT :", etc.
+  // Total HT explicite (Total HT / Montant HT / Net HT / HT :)
   let totalHT = 0;
-  const totalHTMatch = text.match(/(?:total\s*H\.?T\.?|montant\s*H\.?T\.?|ht\s*:?)\s*[:=]?\s*([\d\s.,]+)\s*€?/i);
-  if (totalHTMatch) {
-    const v = parseFloat(totalHTMatch[1].replace(/\s/g,'').replace(',','.'));
-    if (v > 0 && v < 500000) totalHT = v;
+  const htPatterns = [
+    /total\s*H\.?T\.?\s*[:=]?\s*([\d][\d\s.,]*?)\s*€/i,
+    /montant\s*H\.?T\.?\s*[:=]?\s*([\d][\d\s.,]*?)\s*€/i,
+    /net\s*H\.?T\.?\s*[:=]?\s*([\d][\d\s.,]*?)\s*€/i,
+    /\bH\.?T\.?\s*[:=]\s*([\d][\d\s.,]*?)\s*€/i,
+    /total\s+devis\s*[:=]?\s*([\d][\d\s.,]*?)\s*€/i
+  ];
+  for (const p of htPatterns) {
+    const m = text.match(p);
+    if (m) {
+      const v = parseFloat(m[1].replace(/\s/g,'').replace(',','.'));
+      if (v > 0 && v < 500000) { totalHT = v; break; }
+    }
   }
-  // Si pas trouvé explicitement, utilise la somme des lignes
   if (!totalHT && totalFromLines > 0) totalHT = totalFromLines;
 
-  // Détection nom client — cherche après "Client :", "Destinataire :", "M. ", "Mme ", etc.
+  // ========== DÉTECTION CLIENT (nom + prénom) ==========
   let clientName = '';
-  const clientMatch = text.match(/(?:client|destinataire|adresse\s*client|facture\s*[àa])\s*[:\-]?\s*([A-ZÉÀÂÄÈÊËÎÏÔÖÙÛÜ][^\n]{2,50})/i) ||
-                      text.match(/(?:M\.|Mme|Mr\.?|Monsieur|Madame)\s+([A-ZÉÀÂÄÈÊËÎÏÔÖÙÛÜ][A-Za-zÀ-ÿ\s\-]{2,40})/);
-  if (clientMatch) clientName = clientMatch[1].replace(/\s{2,}/g, ' ').trim().slice(0, 60);
+  // 1) Après labels "Client" / "Destinataire" / "Adresse de facturation" / "Facturé à"
+  const labelPatterns = [
+    /(?:client|destinataire|facture\s*[àa]|factur[eé]\s*[àa]|adresse\s+de\s+facturation|adresse\s+client)\s*[:\-]?\s*\n?\s*([^\n]{2,80})/i,
+    /(?:vendeur|prestataire|de\s*la\s*part\s*de)/i // marqueurs négatifs (à éviter)
+  ];
+  let m = text.match(labelPatterns[0]);
+  if (m) clientName = m[1].trim();
+  // 2) Format "M. / Mme / Madame / Monsieur NOM Prénom"
+  if (!clientName) {
+    m = text.match(/(?:M\.|Mme|Mr\.?|Monsieur|Madame)\s+([A-ZÉÀÂÄÈÊËÎÏÔÖÙÛÜÇ][A-Za-zÀ-ÿ\-']{1,30}(?:\s+[A-ZÉÀÂÄÈÊËÎÏÔÖÙÛÜÇ][A-Za-zÀ-ÿ\-']{1,30}){0,3})/);
+    if (m) clientName = m[0].trim().replace(/\s{2,}/g, ' ').slice(0, 60);
+  }
+  // 3) Ligne tout en majuscules style "NOM Prénom" (typique du destinataire en haut)
+  if (!clientName) {
+    const upperLine = text.match(/\n\s*([A-ZÉÀÂÄÈÊËÎÏÔÖÙÛÜÇ]{2,}(?:\s+[A-ZÉÀÂÄÈÊËÎÏÔÖÙÛÜÇ][A-Za-zÀ-ÿ\-']+){1,3})\s*\n/);
+    if (upperLine) clientName = upperLine[1].trim().slice(0, 60);
+  }
+  // Nettoyage : retirer les éventuels mots parasites
+  if (clientName) {
+    clientName = clientName.replace(/\b(SAS|SARL|EURL|SCI|SCEA|EI|Particulier|Société)\b\.?/gi, '').replace(/\s{2,}/g, ' ').trim();
+  }
 
-  // Détection email
+  // ========== EMAIL ==========
   let clientEmail = '';
-  const emailMatch = text.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
-  if (emailMatch) clientEmail = emailMatch[0].trim();
+  const emails = text.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g);
+  if (emails) {
+    // Filtrer les emails de l'entreprise (alex'terieur, daniel-moquet, etc.)
+    const clientMail = emails.find(e => !/alex|terieur|moquet|jardin|creation|noreply|contact@/i.test(e));
+    clientEmail = (clientMail || emails[0]).trim();
+  }
 
-  // Détection téléphone FR (format 0X XX XX XX XX ou +33 X XX XX XX XX)
+  // ========== TÉLÉPHONE ==========
   let clientPhone = '';
-  const phoneMatch = text.match(/(?:\+33[\s.\-]?[1-9]|0[1-9])(?:[\s.\-]?\d{2}){4}/);
-  if (phoneMatch) clientPhone = phoneMatch[0].replace(/\s+/g, ' ').trim();
+  const phones = text.match(/(?:(?:\+33|0033|0)\s?[1-9](?:[\s.\-]?\d{2}){4})/g);
+  if (phones) {
+    // Prendre le téléphone qui n'est pas celui d'Alex'Terieur (exclure si en début de page)
+    const phone = phones.find(p => {
+      const idx = text.indexOf(p);
+      return idx > 200; // probablement après l'en-tête entreprise
+    }) || phones[0];
+    clientPhone = phone.replace(/\s+/g, ' ').trim();
+  }
 
-  // Détection adresse : cherche une ligne avec un CP 5 chiffres FR
+  // ========== ADRESSE COMPLÈTE (multi-lignes) ==========
   let clientAddress = '';
-  // Cherche d'abord les blocs après des labels courants
-  const addrBlockMatch = text.match(/(?:adresse(?:\s*client)?|facture\s*[àa]|livr(?:aison|e)\s*[àa])\s*[:\-]?\s*\n?((?:[^\n]+\n?){1,4}?\d{5}[^\n]*)/i);
-  if (addrBlockMatch) {
-    clientAddress = addrBlockMatch[1].replace(/\s{2,}/g, ' ').replace(/\n+/g, ', ').trim().slice(0, 120);
-  } else {
-    // Cherche toute ligne contenant un CP 5 chiffres (hors numéros de devis)
-    const cpMatch = text.match(/[^\n]*\b\d{5}\b[^\n]*/);
-    if (cpMatch) {
-      // Essaie de récupérer la ligne précédente (numéro + rue) si elle ressemble à une adresse
-      const linesBefore = text.slice(0, text.indexOf(cpMatch[0])).split('\n');
-      const prevLine = linesBefore[linesBefore.length - 1]?.trim() || '';
-      if (prevLine && /\d/.test(prevLine) && prevLine.length < 80) {
-        clientAddress = (prevLine + ', ' + cpMatch[0].trim()).replace(/\s{2,}/g, ' ').slice(0, 120);
-      } else {
-        clientAddress = cpMatch[0].replace(/\s{2,}/g, ' ').trim().slice(0, 120);
-      }
+  // 1) Cherche un bloc avec label
+  const addrLabel = text.match(/(?:adresse(?:\s*(?:client|de\s+facturation))?|facture\s*[àa]|factur[eé]\s*[àa]|livr(?:aison|e)\s*[àa]|destinataire)\s*[:\-]?\s*\n?((?:[^\n]+\n){1,5}[^\n]*\b\d{5}\b[^\n]*)/i);
+  if (addrLabel) {
+    clientAddress = addrLabel[1].split('\n').map(l => l.trim()).filter(Boolean).join(', ').replace(/\s{2,}/g, ' ').slice(0, 150);
+  }
+  // 2) Si pas trouvé : prendre le bloc de 1 à 3 lignes finissant par "CP Ville"
+  if (!clientAddress) {
+    const cpLine = text.match(/((?:^|\n)[^\n]*\b\d{5}\b\s+[A-ZÉÀÂÄ][^\n]+)/);
+    if (cpLine) {
+      const cpStr = cpLine[1].trim();
+      // Récupérer 2 lignes avant (numéro + rue)
+      const before = text.slice(0, text.indexOf(cpStr)).split('\n').slice(-3).map(l => l.trim()).filter(Boolean);
+      // Une "rue" contient en général un nombre + un mot
+      const ruelines = before.filter(l => /\b\d+\b/.test(l) && l.length < 80 && !/devis|facture|tel|tél|mail|email/i.test(l)).slice(-2);
+      clientAddress = (ruelines.join(', ') + ', ' + cpStr).replace(/^,\s*/, '').replace(/\s{2,}/g, ' ').slice(0, 150);
     }
   }
 
@@ -6529,7 +6564,8 @@ async function parseDevisPDFForChantier(file) {
     nbLignes: parsed.items.length,
     numero: parsed.ref || '',
     items: parsed.items || [],
-    fileName: file.name
+    fileName: file.name,
+    rawText: text // pour debug
   };
 }
 
@@ -6591,6 +6627,11 @@ async function openDevisPDFImportChantier(event) {
     if (!result.client && !result.date && result.montantHT === 0) {
       html += `<div style="color:#e67e22;margin-top:8px;font-size:12px;">⚠️ Peu d'infos extraites — vérifie et complète manuellement.</div>`;
     }
+    // Bouton debug : voir le texte brut extrait du PDF (pour comprendre ce qui foire)
+    html += `<details style="margin-top:10px; font-size:12px;">
+      <summary style="cursor:pointer; color:#888;">🔍 Voir le texte brut extrait du PDF (debug)</summary>
+      <pre style="background:#f7f9f5; padding:8px; border-radius:6px; max-height:200px; overflow:auto; font-size:11px; color:#444; white-space:pre-wrap;">${escapeHtml((result.rawText || '').slice(0, 3000))}${(result.rawText || '').length > 3000 ? '\n…(tronqué)' : ''}</pre>
+    </details>`;
     recap.innerHTML = html;
     modal.style.display = 'flex';
   } catch(e) {
