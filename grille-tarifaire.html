@@ -1373,27 +1373,19 @@
   <!-- PAGE CHANTIERS -->
   <div id="page-chantiers" class="page">
 
-    <!-- Tableau de bord (KPIs) — EN HAUT -->
-    <div class="card" id="dashboard-card">
+    <!-- Sections cachées (gardées pour compat code existant) -->
+    <div class="card" id="dashboard-card" style="display:none;">
       <div id="dashboard-content"></div>
     </div>
-
-    <!-- Récap semaine -->
-    <div class="card" id="recap-semaine-card">
+    <div class="card" id="recap-semaine-card" style="display:none;">
       <div id="recap-semaine-content"></div>
     </div>
-
-    <!-- Planning hebdo visuel -->
-    <div class="card" id="planning-hebdo-card">
+    <div class="card" id="planning-hebdo-card" style="display:none;">
       <div id="planning-hebdo-content"></div>
     </div>
-
-    <!-- Alertes dynamiques -->
     <div id="alertes-chantiers-card" style="display:none;">
       <div id="alertes-chantiers-content"></div>
     </div>
-
-    <!-- Carnet sous-traitants -->
     <div class="card" id="soustraitants-card" style="display:none;">
       <h3>Carnet sous-traitants</h3>
       <div id="soustraitants-list"></div>
@@ -1407,16 +1399,8 @@
     <!-- Liste des chantiers -->
     <div class="card">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
-        <h3 style="margin:0;">Mes chantiers <button class="btn-secondary btn-small" style="margin-left:10px;" onclick="toggleSoustraitantsCard()">Sous-traitants</button></h3>
+        <h3 style="margin:0;">Mes chantiers</h3>
         <button class="btn-add btn-small" onclick="openModalAddChantier()" style="white-space:nowrap;">+ Nouveau chantier</button>
-      </div>
-      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
-        <button class="btn-secondary btn-small" onclick="setChantierFilter('')" id="cf-all">Tous</button>
-        <button class="btn-secondary btn-small" onclick="setChantierFilter('planifie')" id="cf-planifie">Planifiés</button>
-        <button class="btn-secondary btn-small" onclick="setChantierFilter('en_cours')" id="cf-en_cours">En cours</button>
-        <button class="btn-secondary btn-small" onclick="setChantierFilter('cloture')" id="cf-cloture">Clôturés</button>
-        <button class="btn-secondary btn-small" onclick="setChantierFilterImpayes()" id="cf-impayes">Impayés</button>
-        <button class="btn-secondary btn-small" onclick="openChantierDedupModal()" id="cf-fusion" title="Détecter et fusionner les chantiers en doublon">🧹 Fusionner doublons</button>
       </div>
       <div id="chantiers-summary" style="margin-bottom:8px;"></div>
       <div id="chantiers-list"></div>
@@ -3005,20 +2989,6 @@ function renderChantiers() {
   const list = document.getElementById('chantiers-list');
   const summary = document.getElementById('chantiers-summary');
 
-  // Mise à jour boutons filtre
-  ['all','planifie','en_cours','cloture'].forEach(k => {
-    const btn = document.getElementById('cf-' + k);
-    if (btn) btn.style.fontWeight = (chantierStatutFilter === (k === 'all' ? '' : k)) ? '700' : '400';
-  });
-  // Bouton impayés
-  const btnImpayes = document.getElementById('cf-impayes');
-  if (btnImpayes) btnImpayes.style.fontWeight = chantierImpayesFilter ? '700' : '400';
-
-  renderDashboard();
-  renderRecapSemaine();
-  renderPlanningHebdo();
-  renderChantiersAlertes();
-
   if (data.chantiers.length === 0) {
     list.innerHTML = '<div class="empty-state">Aucun chantier enregistré. Ajoute le premier depuis la fiche d\'un client (onglet Clients).</div>';
     summary.innerHTML = '';
@@ -3026,159 +2996,94 @@ function renderChantiers() {
     return;
   }
 
-  // Summary (tous les chantiers)
-  let totalRev = 0, totalProfit = 0, totalHours = 0, count = data.chantiers.length;
-  data.chantiers.forEach(ch => {
-    const s = computeChantierStats(ch);
-    totalRev += s.revenue;
-    totalProfit += s.grossProfit;
-    totalHours += ch.hours;
-  });
-  const avgRate = totalHours > 0 ? totalProfit / totalHours : 0;
-  const target = data.targetHourlyRate;
-  const rateClass = avgRate >= target ? 'stat-ok' : avgRate >= target * 0.8 ? 'stat-warn' : 'stat-bad';
-
-  if (typeof isPatron === 'function' && !isPatron()) {
-    // Mode ouvrier : pas de chiffres financiers
-    summary.innerHTML = `
-      <div class="chantier-stats">
-        <div><strong>${count}</strong> chantier(s)</div>
-        <div>Heures travaillées : <strong>${totalHours.toFixed(1)} h</strong></div>
-      </div>
-    `;
-  } else {
-    summary.innerHTML = `
-      <div class="chantier-stats">
-        <div><strong>${count}</strong> chantier(s)</div>
-        <div>CA total : <strong>${totalRev.toFixed(2)} € HT</strong></div>
-        <div>Marge totale : <strong>${totalProfit.toFixed(2)} € HT</strong></div>
-        <div>Heures travaillées : <strong>${totalHours.toFixed(1)} h</strong></div>
-        <div>Taux horaire moyen effectif : <span class="${rateClass}">${avgRate.toFixed(2)} €/h</span> (cible ${target} €/h)</div>
-      </div>
-    `;
-  }
-
-  // Filtrer par statut ou impayés
-  let filtered;
-  if (chantierImpayesFilter) {
-    filtered = data.chantiers.filter(ch => (ch.statut || 'en_cours') === 'cloture' && ch.paid === false);
-  } else {
-    filtered = chantierStatutFilter
-      ? data.chantiers.filter(ch => (ch.statut || 'en_cours') === chantierStatutFilter)
-      : data.chantiers;
-  }
-
-  if (filtered.length === 0) {
-    list.innerHTML = '<div class="empty-state">Aucun chantier pour ce filtre.</div>';
-    renderPrestaLines();
-    return;
-  }
-
-  const statutLabel = { planifie: 'Planifié', en_cours: 'En cours', cloture: 'Clôturé' };
+  summary.innerHTML = '';
   const isPatronMode = (typeof isPatron === 'function' && isPatron());
 
-  // ---- Groupement par client : 1 ligne PAR CLIENT (Fix v39) ----
+  // Groupement 1 carte = 1 client (toutes les visites du même client = 1 chantier)
   const groupsMap = new Map();
-  filtered.forEach(ch => {
+  data.chantiers.forEach(ch => {
     const fallbackName = ch.client || (data.clients.find(cl => cl.id === ch.clientId)?.name) || '?';
     const key = ch.clientId || ('name:' + (fallbackName || '?').toLowerCase());
     if (!groupsMap.has(key)) {
-      groupsMap.set(key, {
-        key,
-        clientId: ch.clientId || null,
-        name: fallbackName,
-        chantiers: []
-      });
+      groupsMap.set(key, { key, clientId: ch.clientId || null, name: fallbackName, chantiers: [] });
     }
     groupsMap.get(key).chantiers.push(ch);
   });
 
-  // Construire la liste des groupes avec stats agrégées + dates clés
   const todayMs = new Date().setHours(0,0,0,0);
   const groups = Array.from(groupsMap.values()).map(g => {
     let totalRevenue = 0, totalProfit = 0, totalHours = 0;
-    let lastModified = 0;
-    let dernierChantier = null; // dernier clôturé/passé
-    let prochainChantier = null; // prochain planifié
+    let firstDate = null, lastDate = null, lastModified = 0;
     g.chantiers.forEach(ch => {
       const s = computeChantierStats(ch);
       totalRevenue += s.revenue;
       totalProfit += s.grossProfit;
       totalHours += (ch.hours || 0);
-      const ts = ch.updatedAt ? new Date(ch.updatedAt).getTime()
-                : ch.date ? new Date(ch.date + 'T00:00:00').getTime()
-                : 0;
-      if (ts > lastModified) lastModified = ts;
-
-      // Dates : prochain (futur planifié) / dernier (passé)
       if (ch.date) {
         const dMs = new Date(ch.date + 'T00:00:00').getTime();
-        if (dMs >= todayMs) {
-          if (!prochainChantier || dMs < new Date(prochainChantier.date + 'T00:00:00').getTime()) {
-            prochainChantier = ch;
-          }
-        } else {
-          if (!dernierChantier || dMs > new Date(dernierChantier.date + 'T00:00:00').getTime()) {
-            dernierChantier = ch;
-          }
-        }
+        if (firstDate === null || dMs < firstDate) firstDate = dMs;
+        if (lastDate === null || dMs > lastDate) lastDate = dMs;
       }
+      const ts = ch.updatedAt ? new Date(ch.updatedAt).getTime() : (ch.date ? new Date(ch.date + 'T00:00:00').getTime() : 0);
+      if (ts > lastModified) lastModified = ts;
     });
     g.totalRevenue = totalRevenue;
     g.totalProfit = totalProfit;
     g.totalHours = totalHours;
+    g.firstDate = firstDate;
+    g.lastDate = lastDate;
     g.lastModified = lastModified;
-    g.dernierChantier = dernierChantier;
-    g.prochainChantier = prochainChantier;
-    g.nbCloture = g.chantiers.filter(c => (c.statut || 'en_cours') === 'cloture').length;
-    g.nbPlanifie = g.chantiers.filter(c => (c.statut || 'en_cours') === 'planifie').length;
-    g.nbEnCours = g.chantiers.filter(c => (c.statut || 'en_cours') === 'en_cours').length;
-    g.nbImpayes = g.chantiers.filter(c => (c.statut || '') === 'cloture' && c.paid === false).length;
+    // Statut consolidé : si au moins 1 non-clos → en cours, sinon réalisé
+    const allClos = g.chantiers.every(c => (c.statut || 'en_cours') === 'cloture');
+    g.statut = allClos ? 'realise' : 'en_cours';
+    g.hasImpaye = g.chantiers.some(c => (c.statut || '') === 'cloture' && c.paid === false);
     return g;
   });
 
-  // Tri groupes par date dernière modif DESC
-  groups.sort((a, b) => b.lastModified - a.lastModified);
+  const enCours = groups.filter(g => g.statut === 'en_cours').sort((a, b) => (a.firstDate || 0) - (b.firstDate || 0));
+  const realises = groups.filter(g => g.statut === 'realise').sort((a, b) => (b.lastDate || 0) - (a.lastDate || 0));
 
-  list.innerHTML = groups.map(g => {
-    const nbCh = g.chantiers.length;
+  const fmtDate = (ms) => {
+    if (!ms) return '';
+    const d = new Date(ms);
+    return d.getDate().toString().padStart(2,'0') + '/' + (d.getMonth()+1).toString().padStart(2,'0') + '/' + String(d.getFullYear()).slice(2);
+  };
+
+  const renderCard = (g) => {
     const nomClient = escapeHtml(g.name);
-    const margePct = g.totalRevenue > 0 ? ((g.totalProfit / g.totalRevenue) * 100) : 0;
-
-    // Récupérer infos du client (adresse, tél)
     const client = g.clientId ? data.clients.find(c => c.id === g.clientId) : null;
     const adresseClient = client ? (client.address || '') : '';
     const phoneClient = client ? (client.phone || '') : '';
+    const margePct = g.totalRevenue > 0 ? ((g.totalProfit / g.totalRevenue) * 100) : 0;
 
-    // Statuts mini
-    const statutsHtml = [];
-    if (g.nbEnCours > 0) statutsHtml.push(`<span style="background:#f39c12; color:#fff; padding:1px 7px; border-radius:10px; font-size:11px;">${g.nbEnCours} en cours</span>`);
-    if (g.nbPlanifie > 0) statutsHtml.push(`<span style="background:#95a5a6; color:#fff; padding:1px 7px; border-radius:10px; font-size:11px;">${g.nbPlanifie} planifié${g.nbPlanifie > 1 ? 's' : ''}</span>`);
-    if (g.nbCloture > 0) statutsHtml.push(`<span style="background:#27ae60; color:#fff; padding:1px 7px; border-radius:10px; font-size:11px;">${g.nbCloture} clos</span>`);
-    if (g.nbImpayes > 0) statutsHtml.push(`<span style="background:#e74c3c; color:#fff; padding:1px 7px; border-radius:10px; font-size:11px;">🔴 ${g.nbImpayes} impayé${g.nbImpayes > 1 ? 's' : ''}</span>`);
-
-    // Dernière / prochaine intervention
-    const datesHtml = [];
-    if (g.dernierChantier) {
-      const statutLab = statutLabel[g.dernierChantier.statut || 'en_cours'] || '';
-      datesHtml.push(`<div style="font-size:12px; color:#666;">📅 Dernier : <strong>${escapeHtml(g.dernierChantier.date)}</strong> (${statutLab.toLowerCase()})</div>`);
-    }
-    if (g.prochainChantier) {
-      datesHtml.push(`<div style="font-size:12px; color:#3d6f28;">⏭️ Prochain : <strong>${escapeHtml(g.prochainChantier.date)}</strong></div>`);
+    // Période (lun → ven, ou date unique)
+    let periodHtml = '';
+    if (g.firstDate && g.lastDate) {
+      if (g.firstDate === g.lastDate) {
+        periodHtml = `<div style="font-size:12px; color:#666;">📅 ${fmtDate(g.firstDate)}</div>`;
+      } else {
+        periodHtml = `<div style="font-size:12px; color:#666;">📅 ${fmtDate(g.firstDate)} → ${fmtDate(g.lastDate)}</div>`;
+      }
     }
 
-    // Stats financiers (patron uniquement)
+    // Badge statut
+    let badge = '';
+    if (g.statut === 'en_cours') {
+      badge = `<span style="background:#f39c12; color:#fff; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600;">🟧 EN COURS</span>`;
+    } else {
+      badge = `<span style="background:#27ae60; color:#fff; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600;">✅ RÉALISÉ</span>`;
+    }
+    if (g.hasImpaye) badge += ` <span style="background:#e74c3c; color:#fff; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600;">🔴 IMPAYÉ</span>`;
+
     const finHtml = isPatronMode
-      ? `<div style="font-size:13px; color:#444; margin-top:4px;">
+      ? `<div style="font-size:13px; color:#444; margin-top:6px;">
            <strong>${g.totalHours.toFixed(1)} h</strong> ·
            <strong>${g.totalRevenue.toFixed(0)} € HT</strong> ·
            Marge <strong>${margePct.toFixed(0)}%</strong>
          </div>`
-      : `<div style="font-size:13px; color:#444; margin-top:4px;"><strong>${g.totalHours.toFixed(1)} h</strong> travaillées</div>`;
+      : `<div style="font-size:13px; color:#444; margin-top:6px;"><strong>${g.totalHours.toFixed(1)} h</strong> travaillées</div>`;
 
-    const onCardClick = g.clientId
-      ? `openClientFiche('${g.clientId}')`
-      : `toast('Client sans fiche')`;
+    const onCardClick = g.clientId ? `openClientFiche('${g.clientId}')` : `toast('Client sans fiche')`;
 
     return `
       <div class="chantier-client-card" style="border:1px solid #d4d4d4; border-radius:8px; padding:12px 14px; margin-bottom:10px; background:#fafbf8; cursor:pointer; transition:background .15s;"
@@ -3187,20 +3092,34 @@ function renderChantiers() {
            onmouseout="this.style.background='#fafbf8';">
         <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px; flex-wrap:wrap;">
           <div style="flex:1; min-width:0;">
-            <div style="font-weight:700; font-size:16px; color:#3d6f28;">👤 ${nomClient} <span style="color:#888; font-weight:400; font-size:13px;">— ${nbCh} chantier${nbCh > 1 ? 's' : ''}</span></div>
+            <div style="font-weight:700; font-size:16px; color:#3d6f28;">👤 ${nomClient}</div>
             ${adresseClient ? `<div style="font-size:12px; color:#666; margin-top:2px;">📍 ${escapeHtml(adresseClient)}</div>` : ''}
             ${phoneClient ? `<div style="font-size:12px; color:#666;">📞 ${escapeHtml(phoneClient)}</div>` : ''}
-            ${statutsHtml.length > 0 ? `<div style="margin-top:6px; display:flex; gap:5px; flex-wrap:wrap;">${statutsHtml.join('')}</div>` : ''}
+            <div style="margin-top:6px; display:flex; gap:5px; flex-wrap:wrap;">${badge}</div>
+            ${periodHtml}
             ${finHtml}
-            ${datesHtml.length > 0 ? `<div style="margin-top:5px;">${datesHtml.join('')}</div>` : ''}
           </div>
           <div style="display:flex; flex-direction:column; gap:5px; align-items:flex-end;">
-            ${g.clientId ? `<button class="btn-add btn-small" onclick="event.stopPropagation(); openClientFiche('${g.clientId}');" style="white-space:nowrap;">📂 Fiche complète</button>` : ''}
+            ${g.clientId ? `<button class="btn-add btn-small" onclick="event.stopPropagation(); openClientFiche('${g.clientId}');" style="white-space:nowrap;">📂 Fiche</button>` : ''}
           </div>
         </div>
       </div>
     `;
-  }).join('');
+  };
+
+  let html = '';
+  if (enCours.length > 0) {
+    html += `<div style="font-size:13px; font-weight:700; color:#e67e22; margin:10px 0 8px; text-transform:uppercase; letter-spacing:.04em;">🟧 En cours (${enCours.length})</div>`;
+    html += enCours.map(renderCard).join('');
+  }
+  if (realises.length > 0) {
+    html += `<div style="font-size:13px; font-weight:700; color:#27ae60; margin:18px 0 8px; text-transform:uppercase; letter-spacing:.04em;">✅ Réalisés (${realises.length})</div>`;
+    html += realises.map(renderCard).join('');
+  }
+  if (enCours.length === 0 && realises.length === 0) {
+    html = '<div class="empty-state">Aucun chantier.</div>';
+  }
+  list.innerHTML = html;
 
   renderPrestaLines();
 }
