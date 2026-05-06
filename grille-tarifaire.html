@@ -1639,10 +1639,14 @@
   <div id="page-business" class="page">
     <div class="sub-tabs">
       <button class="sub-tab active" id="sub-btn-compta" onclick="showSubPage('business','compta')">📊 Comptabilité</button>
+      <button class="sub-tab" id="sub-btn-tarifs" onclick="showSubPage('business','tarifs')">💡 Mes tarifs</button>
       <button class="sub-tab" id="sub-btn-marketing" onclick="showSubPage('business','marketing')">📣 Marketing</button>
     </div>
     <div class="sub-page active" id="sub-page-business-compta" data-sub-render="compta">
       <!-- Contenu injecté dynamiquement depuis page-compta -->
+    </div>
+    <div class="sub-page" id="sub-page-business-tarifs" data-sub-render="tarifs">
+      <div id="tarifs-prestations-content"></div>
     </div>
     <div class="sub-page" id="sub-page-business-marketing" data-sub-render="marketing">
       <!-- Contenu injecté dynamiquement depuis page-marketing -->
@@ -2217,6 +2221,7 @@ function showSubPage(wrapper, sub, updateCurrent) {
   if (sub === 'fournisseurs') { renderFournisseursPage(); }
   if (sub === 'compta') { renderComptaPage(); }
   if (sub === 'marketing') { renderMarketingPage(); }
+  if (sub === 'tarifs') { renderTarifsPrestations(); }
 }
 
 function syncParametresUI() {
@@ -8424,6 +8429,160 @@ function updateChantierTarifJour(chId, value) {
   data.settings.tarifJourPresta = value;
   saveData();
   renderChantierDetail(ch);
+}
+
+// ============ Catalogue "Mes tarifs prestations" (Business → Mes tarifs) ============
+
+const DEFAULT_TARIFS_PRESTATIONS = [
+  { nom: 'Tonte de pelouse',          unite: 'm²',     cadence: 80 },
+  { nom: 'Taille de haies (taillé+ramassé)', unite: 'ml', cadence: 5 },
+  { nom: 'Élagage petit arbre',       unite: 'unité',  cadence: 1 },
+  { nom: 'Bêchage / désherbage manuel', unite: 'm²',   cadence: 15 },
+  { nom: 'Plantation arbustes',       unite: 'unité',  cadence: 2 },
+  { nom: 'Plantation gazon (semis)',  unite: 'm²',     cadence: 30 },
+  { nom: 'Pose gazon en plaques',     unite: 'm²',     cadence: 30 },
+  { nom: 'Débroussaillage',           unite: 'm²',     cadence: 100 },
+  { nom: 'Mulch / paillage',          unite: 'm²',     cadence: 25 },
+  { nom: 'Évacuation déchets verts',  unite: 'm³',     cadence: 1 },
+  { nom: 'Pose dalles',               unite: 'm²',     cadence: 4 },
+  { nom: 'Pose pavés',                unite: 'm²',     cadence: 3 },
+  { nom: 'Création massif',           unite: 'm²',     cadence: 5 }
+];
+
+function ensureTarifsPrestations() {
+  if (!data.tarifsPrestations || !Array.isArray(data.tarifsPrestations) || data.tarifsPrestations.length === 0) {
+    data.tarifsPrestations = DEFAULT_TARIFS_PRESTATIONS.map(p => ({
+      id: 'tp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+      nom: p.nom, unite: p.unite, cadence: p.cadence, prixOverride: null, notes: ''
+    }));
+    saveData();
+  }
+}
+
+function renderTarifsPrestations() {
+  ensureTarifsPrestations();
+  const el = document.getElementById('tarifs-prestations-content');
+  if (!el) return;
+  const heuresJour = 8;
+  const tarifJour = (data.settings?.tarifJourPresta) || 800;
+  const tarifHeure = tarifJour / heuresJour;
+  let seuilJour = 0;
+  try {
+    if (typeof computeComptaTotals === 'function' && data.comptabilite) {
+      seuilJour = computeComptaTotals().seuilJour || 0;
+    }
+  } catch(e) {}
+  const seuilHeure = seuilJour > 0 ? seuilJour / heuresJour : 0;
+
+  const lignes = data.tarifsPrestations || [];
+
+  el.innerHTML = `
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+        <h3 style="margin:0;">💡 Mes tarifs prestations</h3>
+        <button class="btn-add btn-small" onclick="addTarifPrestation()">+ Ajouter</button>
+      </div>
+      <p style="font-size:13px; color:#666; margin-top:0;">
+        Tableau de référence pour vendre tes prestations rapidement et avec moins de risque.
+        Le prix au mètre/m² est calculé automatiquement selon ta cadence et ton objectif jour.
+      </p>
+
+      <div style="background:#f0f7eb; padding:10px 12px; border-radius:6px; margin-bottom:14px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <span style="font-size:12px; color:#666;">🎯 Mon objectif</span>
+        <input type="number" step="10" value="${tarifJour}"
+               onchange="updateTarifJourGlobal(parseFloat(this.value) || 0)"
+               style="padding:5px 8px; border:1px solid #d4d4d4; border-radius:4px; width:90px; font-weight:700; color:#3d6f28; text-align:right; font-size:14px;">
+        <span style="font-size:12px; color:#666;">€/jour HT (= ${tarifHeure.toFixed(0)} €/h sur ${heuresJour}h)</span>
+        ${seuilJour > 0 ? `<span style="font-size:11px; color:#888; margin-left:auto;">Seuil rentabilité : ${seuilJour.toFixed(0)} €/jour (${seuilHeure.toFixed(0)} €/h)</span>` : ''}
+      </div>
+
+      <div style="overflow-x:auto;">
+      <table style="width:100%; border-collapse:collapse; font-size:13px; min-width:680px;">
+        <thead>
+          <tr style="background:#f5f5f5;">
+            <th style="padding:8px; border:1px solid #ddd; text-align:left; min-width:200px;">Prestation</th>
+            <th style="padding:8px; border:1px solid #ddd; width:65px;">Unité</th>
+            <th style="padding:8px; border:1px solid #ddd; width:90px;" title="Combien d'unités tu fais en 1h">Cadence (u/h)</th>
+            <th style="padding:8px; border:1px solid #ddd; width:120px; background:#eaf4e3;">Prix HT/unité conseillé</th>
+            <th style="padding:8px; border:1px solid #ddd; width:120px;" title="Tu peux fixer ton propre prix (sinon calculé auto)">Mon prix HT (override)</th>
+            <th style="padding:8px; border:1px solid #ddd; width:100px;">Temps pour 1 jour</th>
+            <th style="padding:8px; border:1px solid #ddd; width:38px;"></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${lignes.map((p, i) => {
+            const cadence = parseFloat(p.cadence) || 0;
+            const prixCalcule = cadence > 0 ? (tarifHeure / cadence) : 0;
+            const hasOverride = (p.prixOverride !== null && p.prixOverride !== undefined && p.prixOverride !== '');
+            const prixAffiche = hasOverride ? parseFloat(p.prixOverride) : prixCalcule;
+            const qtePourJour = cadence * heuresJour;
+            return `
+              <tr>
+                <td style="padding:3px; border:1px solid #ddd;">
+                  <input type="text" value="${escapeAttr(p.nom || '')}" oninput="updateTarifPrestation('${p.id}', 'nom', this.value, true)" placeholder="Taille de haies" style="width:100%; padding:5px 7px; border:1px solid #ddd; border-radius:4px; font-size:13px;">
+                </td>
+                <td style="padding:3px; border:1px solid #ddd;">
+                  <input type="text" value="${escapeAttr(p.unite || '')}" oninput="updateTarifPrestation('${p.id}', 'unite', this.value, true)" placeholder="ml" style="width:100%; padding:5px 7px; border:1px solid #ddd; border-radius:4px; font-size:13px;">
+                </td>
+                <td style="padding:3px; border:1px solid #ddd;">
+                  <input type="number" step="0.5" value="${p.cadence || ''}" onchange="updateTarifPrestation('${p.id}', 'cadence', parseFloat(this.value) || 0)" placeholder="5" style="width:100%; padding:5px 7px; border:1px solid #ddd; border-radius:4px; font-size:13px; text-align:right;">
+                </td>
+                <td style="padding:8px; border:1px solid #ddd; text-align:right; background:#eaf4e3; font-weight:700; color:#3d6f28; font-size:14px;">${cadence > 0 ? prixCalcule.toFixed(2) + ' €/' + (p.unite || 'u') : '—'}</td>
+                <td style="padding:3px; border:1px solid #ddd;">
+                  <input type="number" step="0.01" value="${hasOverride ? p.prixOverride : ''}" onchange="updateTarifPrestation('${p.id}', 'prixOverride', this.value === '' ? null : (parseFloat(this.value) || 0))" placeholder="${cadence > 0 ? prixCalcule.toFixed(2) : 'auto'}" style="width:100%; padding:5px 7px; border:1px solid ${hasOverride ? '#3d6f28' : '#ddd'}; border-radius:4px; font-size:13px; text-align:right; font-weight:${hasOverride ? '700' : '400'};">
+                </td>
+                <td style="padding:8px; border:1px solid #ddd; text-align:right; color:#666; font-size:12px;">${cadence > 0 ? qtePourJour + ' ' + (p.unite || 'u') : '—'}</td>
+                <td style="padding:3px; border:1px solid #ddd; text-align:center;"><button onclick="removeTarifPrestation('${p.id}')" style="background:none; border:none; color:#e74c3c; cursor:pointer; font-size:14px;" title="Supprimer">✕</button></td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+      </div>
+
+      <div style="margin-top:14px; padding:10px 12px; background:#fffaf0; border-left:3px solid #e67e22; border-radius:0 6px 6px 0; font-size:12px; color:#666;">
+        💡 <strong>Comment lire ce tableau :</strong>
+        <br>• <strong>Cadence (u/h)</strong> : combien d'unités tu fais en 1 heure (modifiable selon ton expérience)
+        <br>• <strong>Prix HT/unité conseillé</strong> : calcul auto pour atteindre ton objectif de ${tarifJour}€/jour
+        <br>• <strong>Mon prix override</strong> : si tu veux fixer ton propre prix (vert) — sinon le prix conseillé est utilisé
+        <br>• <strong>Temps pour 1 jour</strong> : combien d'unités tu peux faire dans une journée de ${heuresJour}h
+      </div>
+    </div>
+  `;
+}
+
+function updateTarifJourGlobal(value) {
+  if (!data.settings) data.settings = {};
+  data.settings.tarifJourPresta = value;
+  saveData();
+  renderTarifsPrestations();
+}
+
+function addTarifPrestation() {
+  ensureTarifsPrestations();
+  data.tarifsPrestations.push({
+    id: 'tp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+    nom: '', unite: 'ml', cadence: 0, prixOverride: null, notes: ''
+  });
+  saveData();
+  renderTarifsPrestations();
+}
+
+function updateTarifPrestation(id, field, value, noRender) {
+  const p = (data.tarifsPrestations || []).find(x => x.id === id);
+  if (!p) return;
+  p[field] = value;
+  saveData();
+  if (!noRender) renderTarifsPrestations();
+}
+
+function removeTarifPrestation(id) {
+  const p = (data.tarifsPrestations || []).find(x => x.id === id);
+  if (!p) return;
+  if (!confirm(`Supprimer "${p.nom || 'cette prestation'}" du catalogue ?`)) return;
+  data.tarifsPrestations = data.tarifsPrestations.filter(x => x.id !== id);
+  saveData();
+  renderTarifsPrestations();
 }
 
 function updateChantierField(chId, field, val) {
