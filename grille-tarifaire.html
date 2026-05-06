@@ -9031,36 +9031,34 @@ function _accueilWeekNav(delta) {
   _accueilLoadAgenda();
 }
 
-function _accueilRenderEventLine(ev) {
+// Tap un event → menu d'action (démarrer/arrêter timer, ouvrir chantier lié)
+function _accueilOpenEvent(eventId) {
+  const events = (_todayAgendaCache.events || []);
+  const ev = events.find(e => e.id === eventId);
+  if (!ev) return;
+  const titre = ev.summary || 'Événement';
+  const activeCh = findActiveChantierForEvent(eventId);
   const cls = classifyAgendaEvent(ev);
-  const timeRange = getEventTimeRange(ev);
-  const title = escapeHtml(ev.summary || '(Sans titre)');
-  const activeCh = findActiveChantierForEvent(ev.id);
-  const isActive = !!activeCh;
-  const safeId = String(ev.id).replace(/'/g, "\\'");
-  const badgeBg = cls.type === 'babad' ? '#e8f1f9' : cls.type === 'chantier' ? '#eaf4e3' : '#f0f0f0';
-  let timerBtn = '';
-  if (isActive) {
-    timerBtn = `<button class="btn-danger btn-small" onclick="stopTimerFromGoogleEvent('${safeId}'); setTimeout(renderAccueilPage,100);">&#9632; Arrêter</button>`;
-  } else {
-    const t = cls.type === 'babad' ? 'babad' : cls.type === 'chantier' ? 'chantier' : 'autre';
-    timerBtn = `<button class="btn-add btn-small" onclick="startTimerFromGoogleEvent('${safeId}', null, '${t}'); setTimeout(renderAccueilPage,100);">&#9654; Démarrer</button>`;
+  const linkedCh = (data.chantiers || []).find(c => c.googleEventId === eventId);
+
+  if (activeCh) {
+    if (confirm(`Timer en cours sur "${titre}".\n\nL'arrêter ?`)) {
+      stopTimerFromGoogleEvent(eventId);
+      setTimeout(renderAccueilPage, 100);
+    }
+    return;
   }
-  const loc = ev.location ? `<div style="font-size:11px; color:#888;">📍 ${escapeHtml(ev.location)}</div>` : '';
-  const highlight = isActive ? 'border:2px solid #2ecc71; background:#f4faf0;' : 'border:1px solid #e0e0e0; background:#fff;';
-  return `<div style="${highlight} border-radius:8px; padding:8px 10px; margin-bottom:5px;">
-    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px; flex-wrap:wrap;">
-      <div style="flex:1; min-width:0;">
-        <div style="display:flex; align-items:center; gap:6px; margin-bottom:2px; flex-wrap:wrap;">
-          <span style="font-size:9px; font-weight:700; padding:2px 6px; border-radius:10px; background:${badgeBg}; color:${cls.color}; text-transform:uppercase;">${cls.label}</span>
-          <span style="font-weight:600; font-size:13px;">${title}</span>
-        </div>
-        <div style="font-size:11px; color:#666;">⏰ ${timeRange}</div>
-        ${loc}
-      </div>
-      <div style="display:flex; gap:6px; align-items:center; flex-shrink:0;">${timerBtn}</div>
-    </div>
-  </div>`;
+  const t = cls.type === 'babad' ? 'babad' : cls.type === 'chantier' ? 'chantier' : 'autre';
+  if (linkedCh) {
+    const r = confirm(`"${titre}"\n\n▶ OK = Démarrer le timer\n📂 Annuler = Ouvrir la fiche chantier`);
+    if (r) { startTimerFromGoogleEvent(eventId, null, t); setTimeout(renderAccueilPage, 100); }
+    else { dashboardOpenChantier(linkedCh.id); }
+  } else {
+    if (confirm(`"${titre}"\n\n▶ Démarrer un timer sur cet événement ?`)) {
+      startTimerFromGoogleEvent(eventId, null, t);
+      setTimeout(renderAccueilPage, 100);
+    }
+  }
 }
 
 async function _accueilLoadAgenda() {
@@ -9095,47 +9093,144 @@ async function _accueilLoadAgenda() {
       el.innerHTML = navBar + `<div style="color:#e67e22; font-size:12px;">⚠️ Impossible de charger l'agenda.</div>`;
       return;
     }
-    // Stocker pour que startTimerFromGoogleEvent retrouve l'event
     _todayAgendaCache = { events: events, fetchedAt: Date.now() };
 
-    // Grouper par jour
-    const groups = {};
+    // Construire 7 jours
+    const days = [];
     for (let i = 0; i < 7; i++) {
       const d = new Date(monday); d.setDate(monday.getDate() + i);
-      const k = d.toISOString().slice(0,10);
-      groups[k] = { date: new Date(d), events: [] };
+      days.push({ date: d, dateStr: d.toISOString().slice(0,10), allDay: [], timed: [] });
     }
     events.forEach(ev => {
+      const isAllDay = ev.start && ev.start.date && !ev.start.dateTime;
       let dStr;
-      if (ev.start && ev.start.date) dStr = ev.start.date;
+      if (isAllDay) dStr = ev.start.date;
       else if (ev.start && ev.start.dateTime) dStr = new Date(ev.start.dateTime).toISOString().slice(0,10);
       else return;
-      if (groups[dStr]) groups[dStr].events.push(ev);
+      const day = days.find(x => x.dateStr === dStr);
+      if (!day) return;
+      if (isAllDay) day.allDay.push(ev);
+      else day.timed.push(ev);
     });
 
-    const todayStr = new Date().toISOString().slice(0,10);
-    const dayLabels = ['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'];
-    let html = navBar;
-    let totalEvents = 0;
-    Object.keys(groups).sort().forEach(k => {
-      const g = groups[k];
-      totalEvents += g.events.length;
-      const dayLbl = dayLabels[((g.date.getDay()+6)%7)];
-      const isToday = k === todayStr;
-      const dateLabel = `${dayLbl} ${g.date.getDate()} ${moisCourt[g.date.getMonth()]}`;
-      const headColor = isToday ? '#3d6f28' : '#888';
-      const todayMark = isToday ? ' · aujourd\'hui' : '';
-      const dayHeader = `<div style="font-size:12px; font-weight:700; color:${headColor}; margin:10px 0 4px; text-transform:uppercase; letter-spacing:.03em;">${dateLabel}${todayMark}</div>`;
-      if (g.events.length === 0) {
-        html += dayHeader + `<div style="color:#ccc; font-size:11px; padding:2px 0 2px 4px;">—</div>`;
-      } else {
-        html += dayHeader + g.events.map(_accueilRenderEventLine).join('');
-      }
+    // Plage horaire dynamique : par défaut 7h-19h, étendue selon events
+    let minHour = 7, maxHour = 19;
+    days.forEach(day => {
+      day.timed.forEach(ev => {
+        const s = new Date(ev.start.dateTime);
+        const e = ev.end && ev.end.dateTime ? new Date(ev.end.dateTime) : new Date(s.getTime() + 3600000);
+        const sh = s.getHours();
+        const eh = e.getHours() + (e.getMinutes() > 0 ? 1 : 0);
+        if (sh < minHour) minHour = Math.max(0, sh);
+        if (eh > maxHour) maxHour = Math.min(24, eh);
+      });
     });
-    if (totalEvents === 0) {
-      html += `<div style="color:#aaa; font-size:12px; padding:8px 0; text-align:center;">Rien dans l'agenda cette semaine.</div>`;
+    const hourHeight = 42;
+    const totalRows = maxHour - minHour;
+    const gridHeight = totalRows * hourHeight;
+    const dayLabels = ['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'];
+    const todayStr = new Date().toISOString().slice(0,10);
+    const totalCount = days.reduce((s, d) => s + d.allDay.length + d.timed.length, 0);
+    const hasAllDay = days.some(d => d.allDay.length > 0);
+
+    // Header (1 cellule heures vide + 7 cellules jours)
+    let headersHtml = `<div style="background:#f7f9f5; border-bottom:1px solid #e0e0e0; border-right:1px solid #e0e0e0;"></div>`;
+    days.forEach((day, i) => {
+      const isToday = day.dateStr === todayStr;
+      const bg = isToday ? '#fff8e1' : '#f7f9f5';
+      const color = isToday ? '#3d6f28' : '#444';
+      const weight = isToday ? '700' : '600';
+      headersHtml += `<div style="background:${bg}; color:${color}; font-weight:${weight}; padding:6px 4px; font-size:11px; text-align:center; border-bottom:1px solid #e0e0e0; border-right:1px solid #eee;">
+        ${dayLabels[i]}<br><span style="font-size:15px;">${day.date.getDate()}</span>
+      </div>`;
+    });
+
+    // Row all-day si nécessaire
+    let allDayHtml = '';
+    if (hasAllDay) {
+      allDayHtml = `<div style="background:#fafafa; padding:4px 6px; font-size:9px; color:#888; text-align:right; border-bottom:1px solid #e0e0e0; border-right:1px solid #e0e0e0;">JOURNÉE</div>`;
+      days.forEach(day => {
+        const isToday = day.dateStr === todayStr;
+        const bg = isToday ? '#fff8e1' : '#fafafa';
+        let cell = `<div style="background:${bg}; padding:3px; min-height:22px; border-bottom:1px solid #e0e0e0; border-right:1px solid #eee;">`;
+        day.allDay.forEach(ev => {
+          const cls = classifyAgendaEvent(ev);
+          const safeId = String(ev.id).replace(/'/g, "\\'");
+          const title = escapeHtml((ev.summary || '').slice(0, 14));
+          cell += `<div onclick="_accueilOpenEvent('${safeId}')" title="${escapeHtml(ev.summary || '')}" style="cursor:pointer; background:${cls.color}; color:#fff; padding:2px 5px; border-radius:3px; font-size:10px; margin:1px 0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;">${title}</div>`;
+        });
+        cell += `</div>`;
+        allDayHtml += cell;
+      });
     }
-    el.innerHTML = html;
+
+    // Body : colonne heures + 7 colonnes jours avec events positionnés
+    let bodyHtml = `<div style="background:#fafafa; border-right:1px solid #e0e0e0; position:relative; height:${gridHeight}px;">`;
+    for (let h = minHour; h < maxHour; h++) {
+      const top = (h - minHour) * hourHeight;
+      bodyHtml += `<div style="position:absolute; top:${top}px; right:4px; left:0; padding-top:1px; font-size:9px; color:#888; text-align:right;">${h}h</div>`;
+    }
+    bodyHtml += `</div>`;
+
+    // Position courante (ligne rouge "now")
+    const now = new Date();
+    const showNow = (now >= monday && now <= sunday);
+    const nowDayStr = now.toISOString().slice(0,10);
+    const nowH = now.getHours() + now.getMinutes()/60;
+
+    days.forEach(day => {
+      const isToday = day.dateStr === todayStr;
+      let dayCol = `<div style="position:relative; height:${gridHeight}px; background:${isToday ? '#fffdf3' : '#fff'}; border-right:1px solid #eee;">`;
+      // Lignes horizontales
+      for (let h = minHour; h < maxHour; h++) {
+        const top = (h - minHour) * hourHeight;
+        dayCol += `<div style="position:absolute; top:${top}px; left:0; right:0; height:${hourHeight}px; border-bottom:1px solid #f0f0f0;"></div>`;
+      }
+      // Ligne "maintenant"
+      if (showNow && day.dateStr === nowDayStr && nowH >= minHour && nowH <= maxHour) {
+        const t = (nowH - minHour) * hourHeight;
+        dayCol += `<div style="position:absolute; top:${t}px; left:0; right:0; height:2px; background:#e74c3c; z-index:5;"></div>
+                   <div style="position:absolute; top:${t-3}px; left:-3px; width:8px; height:8px; background:#e74c3c; border-radius:50%; z-index:5;"></div>`;
+      }
+      // Events
+      day.timed.forEach(ev => {
+        const s = new Date(ev.start.dateTime);
+        const e = ev.end && ev.end.dateTime ? new Date(ev.end.dateTime) : new Date(s.getTime() + 3600000);
+        const startH = s.getHours() + s.getMinutes()/60;
+        const endH = e.getHours() + e.getMinutes()/60;
+        const top = Math.max(0, (startH - minHour) * hourHeight);
+        const height = Math.max(20, (endH - startH) * hourHeight - 2);
+        const cls = classifyAgendaEvent(ev);
+        const activeCh = findActiveChantierForEvent(ev.id);
+        const isActive = !!activeCh;
+        const safeId = String(ev.id).replace(/'/g, "\\'");
+        const title = escapeHtml((ev.summary || '').slice(0, 30));
+        const timeStr = s.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+        const bgEvent = cls.color;
+        const ring = isActive ? 'box-shadow:0 0 0 2px #2ecc71; outline:1px solid #fff;' : '';
+        dayCol += `<div onclick="_accueilOpenEvent('${safeId}')" title="${escapeHtml(ev.summary || '')}" style="position:absolute; top:${top}px; left:2px; right:2px; height:${height}px; background:${bgEvent}; color:#fff; border-radius:4px; padding:2px 4px; font-size:10px; line-height:1.2; cursor:pointer; overflow:hidden; ${ring}">
+          <div style="font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${title}</div>
+          <div style="font-size:9px; opacity:0.9;">${timeStr}${isActive ? ' ⏱' : ''}</div>
+        </div>`;
+      });
+      dayCol += `</div>`;
+      bodyHtml += dayCol;
+    });
+
+    const gridCols = `38px repeat(7, minmax(70px, 1fr))`;
+    el.innerHTML = navBar + `
+      <div style="overflow-x:auto; -webkit-overflow-scrolling:touch; border:1px solid #e0e0e0; border-radius:8px; background:#fff;">
+        <div style="display:grid; grid-template-columns:${gridCols}; min-width:580px;">
+          ${headersHtml}
+          ${allDayHtml}
+          ${bodyHtml}
+        </div>
+      </div>
+      ${totalCount === 0 ? `<div style="color:#aaa; font-size:12px; padding:8px 0; text-align:center;">Rien dans l'agenda cette semaine.</div>` : ''}
+      <div style="font-size:11px; color:#888; margin-top:8px; padding-top:6px; border-top:1px dashed #eee;">
+        Touche un event pour démarrer / arrêter le timer. Ligne rouge = maintenant.
+      </div>
+    `;
   } catch(e) {
     console.warn('_accueilLoadAgenda', e);
     el.innerHTML = navBar + `<div style="color:#aaa; font-size:12px;">Impossible de charger l'agenda.</div>`;
