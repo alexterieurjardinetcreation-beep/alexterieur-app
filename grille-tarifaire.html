@@ -7820,6 +7820,26 @@ function renderChantierDetail(ch) {
 
     ${isPatron() ? renderUserSessionsBreakdown(ch) : ''}
 
+    ${isPatron() && !isBabad ? `
+    <!-- Prix vendu (CA HT) — bloc mis en avant juste après pointage -->
+    <div style="margin-top:14px; padding:14px 16px; background:#f0f7eb; border:2px solid #3d6f28; border-radius:10px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
+        <div>
+          <div style="font-size:11px; color:#666; text-transform:uppercase; font-weight:700;">💰 Prix vendu (CA HT)</div>
+          <div style="font-size:12px; color:#888; margin-top:2px;">Le prix que tu as vendu ce chantier au client.</div>
+        </div>
+        <div style="display:flex; gap:6px; align-items:center;">
+          <input type="number" step="0.01" value="${ch.montantHT || 0}"
+                 onchange="updateChantierField('${ch.id}', 'montantHT', parseFloat(this.value) || 0); setTimeout(() => { const c = data.chantiers.find(c => c.id === '${ch.id}'); if (c) renderChantierDetail(c); }, 50);"
+                 style="padding:8px 12px; border:1px solid #d4d4d4; border-radius:6px; width:140px; font-size:20px; font-weight:700; color:#3d6f28; text-align:right; background:#fff;">
+          <span style="font-size:18px; font-weight:600; color:#3d6f28;">€ HT</span>
+        </div>
+      </div>
+    </div>
+
+    ${renderChantierRentabPresta(ch)}
+    ` : ''}
+
     ${(isPatron() && devis) ? `
       <div style="margin-top:18px; padding:14px 16px; background:#fff; border:1px solid #e0e6d8; border-radius:8px;">
         <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
@@ -7832,19 +7852,19 @@ function renderChantierDetail(ch) {
 
     <!-- Champs editables -->
     <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
+      <div class="field" style="flex:1; min-width:220px;">
+        <label style="font-size:12px; color:#666;">📍 Adresse chantier (pour GPS)</label>
+        <input type="text" value="${escapeAttr(ch.adresse || '')}"
+               onchange="updateChantierField('${ch.id}', 'adresse', this.value)"
+               placeholder="ex: 12 rue des Lilas, Mâcon"
+               style="padding:6px 10px; border:1px solid #d4d4d4; border-radius:4px; width:100%;">
+      </div>
       <div class="field" style="max-width:140px;">
         <label style="font-size:12px; color:#666;">Heures travaillees</label>
         <input type="number" step="0.25" value="${ch.hours || 0}"
                onchange="updateChantierField('${ch.id}', 'hours', parseFloat(this.value) || 0)"
                style="padding:6px 10px; border:1px solid #d4d4d4; border-radius:4px;">
       </div>
-      ${!isBabad ? `
-      <div class="field" style="max-width:140px;">
-        <label style="font-size:12px; color:#666;">Montant HT (€)</label>
-        <input type="number" step="0.01" value="${ch.montantHT || 0}"
-               onchange="updateChantierField('${ch.id}', 'montantHT', parseFloat(this.value) || 0)"
-               style="padding:6px 10px; border:1px solid #d4d4d4; border-radius:4px;">
-      </div>` : ''}
       <div class="field" style="max-width:140px;">
         <label style="font-size:12px; color:#666;">Statut</label>
         <select onchange="updateChantierField('${ch.id}', 'statut', this.value)"
@@ -8202,6 +8222,166 @@ function renderAchatsTable(ch) {
       </tbody>
     </table>
   `;
+}
+
+// ============ Rentabilité par prestation (taille de haie 70 ml, etc.) ============
+
+function _chantierGetCoutHeure() {
+  // Calcul du coût horaire basé sur le seuil de rentabilité (Comptabilité)
+  let seuilJour = 0;
+  try {
+    if (typeof computeComptaTotals === 'function' && data.comptabilite) {
+      seuilJour = computeComptaTotals().seuilJour || 0;
+    }
+  } catch(e) { console.warn('seuilJour calc', e); }
+  const heuresJour = 8;
+  return { seuilJour, heuresJour, coutHeure: seuilJour > 0 ? (seuilJour / heuresJour) : 0 };
+}
+
+function renderChantierRentabPresta(ch) {
+  if (!isPatron()) return '';
+  const { seuilJour, heuresJour, coutHeure } = _chantierGetCoutHeure();
+  const lignes = ch.rentabilitePrestations || [];
+  const ca = (ch.montantHT && ch.montantHT > 0) ? ch.montantHT : 0;
+
+  let totalHeures = 0, totalMatos = 0, totalCout = 0;
+  const rows = lignes.map((l, i) => {
+    const heures = parseFloat(l.heures) || 0;
+    const qty = parseFloat(l.qty) || 0;
+    const coutMatos = parseFloat(l.coutMatos) || 0;
+    const coutMO = heures * coutHeure;
+    const coutTotal = coutMO + coutMatos;
+    const prixUnit = qty > 0 ? coutTotal / qty : 0;
+    totalHeures += heures;
+    totalMatos += coutMatos;
+    totalCout += coutTotal;
+    return { l, i, heures, qty, coutMatos, coutMO, coutTotal, prixUnit };
+  });
+
+  const margeChantier = ca - totalCout;
+  const margePct = ca > 0 ? (margeChantier / ca) * 100 : 0;
+  const margeColor = margePct >= 25 ? '#27ae60' : margePct >= 10 ? '#e67e22' : '#e74c3c';
+
+  return `
+    <div style="margin-top:14px; padding:14px 16px; background:#fff; border:1px solid #e0e6d8; border-radius:10px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:8px;">
+        <h3 style="margin:0; color:#3d6f28;">📊 Rentabilité par prestation</h3>
+        <button class="btn-add btn-small" onclick="addChantierRentabLine('${ch.id}')">+ Ajouter une prestation</button>
+      </div>
+      ${seuilJour > 0
+        ? `<div style="background:#f7f9f5; padding:8px 12px; border-radius:6px; margin-bottom:10px; font-size:12px; color:#666;">
+            🎯 Ton seuil de rentabilité : <strong style="color:#3d6f28;">${seuilJour.toFixed(2)} €/jour</strong>
+            · Coût/heure : <strong style="color:#3d6f28;">${coutHeure.toFixed(2)} €/h</strong>
+            <span style="color:#888;">(base ${heuresJour}h/jour ouvré)</span>
+          </div>`
+        : `<div style="background:#fff8e1; padding:8px 12px; border-radius:6px; margin-bottom:10px; font-size:12px; color:#b35900;">
+            ⚠️ Renseigne tes charges dans l'onglet <strong>Comptabilité</strong> pour calculer le seuil de rentabilité automatiquement.
+          </div>`}
+      ${lignes.length === 0
+        ? `<div style="color:#888; font-style:italic; padding:8px 0;">Aucune prestation. Clique "+ Ajouter une prestation" pour saisir ex: "Taille de haies" / 70 ml / 5h.</div>`
+        : `<div style="overflow-x:auto;">
+          <table style="width:100%; border-collapse:collapse; font-size:13px; min-width:680px;">
+            <thead>
+              <tr style="background:#f5f5f5;">
+                <th style="padding:6px; border:1px solid #ddd; text-align:left; min-width:140px;">Prestation</th>
+                <th style="padding:6px; border:1px solid #ddd; width:75px;">Qté</th>
+                <th style="padding:6px; border:1px solid #ddd; width:65px;">Unité</th>
+                <th style="padding:6px; border:1px solid #ddd; width:75px;">Heures</th>
+                <th style="padding:6px; border:1px solid #ddd; width:90px;">Matériel €</th>
+                <th style="padding:6px; border:1px solid #ddd; width:90px; background:#fff8e1;">Coût total</th>
+                <th style="padding:6px; border:1px solid #ddd; width:115px; background:#eaf4e3;">Prix de revient/unité</th>
+                <th style="padding:6px; border:1px solid #ddd; width:38px;"></th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map(r => `
+                <tr>
+                  <td style="padding:3px; border:1px solid #ddd;">
+                    <input type="text" value="${escapeAttr(r.l.desc || '')}" oninput="updateChantierRentabLineNoRender('${ch.id}', ${r.i}, 'desc', this.value)" placeholder="Taille de haies" style="width:100%; padding:5px 7px; border:1px solid #ddd; border-radius:4px; font-size:13px;">
+                  </td>
+                  <td style="padding:3px; border:1px solid #ddd;">
+                    <input type="number" step="0.1" value="${r.qty || ''}" onchange="updateChantierRentabLine('${ch.id}', ${r.i}, 'qty', parseFloat(this.value) || 0)" style="width:100%; padding:5px 7px; border:1px solid #ddd; border-radius:4px; font-size:13px; text-align:right;">
+                  </td>
+                  <td style="padding:3px; border:1px solid #ddd;">
+                    <input type="text" value="${escapeAttr(r.l.unit || '')}" oninput="updateChantierRentabLineNoRender('${ch.id}', ${r.i}, 'unit', this.value)" placeholder="ml" style="width:100%; padding:5px 7px; border:1px solid #ddd; border-radius:4px; font-size:13px;">
+                  </td>
+                  <td style="padding:3px; border:1px solid #ddd;">
+                    <input type="number" step="0.25" value="${r.heures || ''}" onchange="updateChantierRentabLine('${ch.id}', ${r.i}, 'heures', parseFloat(this.value) || 0)" style="width:100%; padding:5px 7px; border:1px solid #ddd; border-radius:4px; font-size:13px; text-align:right;">
+                  </td>
+                  <td style="padding:3px; border:1px solid #ddd;">
+                    <input type="number" step="0.01" value="${r.coutMatos || ''}" onchange="updateChantierRentabLine('${ch.id}', ${r.i}, 'coutMatos', parseFloat(this.value) || 0)" style="width:100%; padding:5px 7px; border:1px solid #ddd; border-radius:4px; font-size:13px; text-align:right;">
+                  </td>
+                  <td style="padding:6px; border:1px solid #ddd; text-align:right; background:#fff8e1; font-weight:600;">${r.coutTotal.toFixed(2)} €</td>
+                  <td style="padding:6px; border:1px solid #ddd; text-align:right; background:#eaf4e3; font-weight:600; color:#3d6f28;">${r.qty > 0 ? r.prixUnit.toFixed(2) + ' €/' + (r.l.unit || '?') : '—'}</td>
+                  <td style="padding:3px; border:1px solid #ddd; text-align:center;"><button onclick="removeChantierRentabLine('${ch.id}', ${r.i})" style="background:none; border:none; color:#e74c3c; cursor:pointer; font-size:14px;" title="Supprimer">✕</button></td>
+                </tr>
+              `).join('')}
+              <tr style="background:#fafcf7; font-weight:600;">
+                <td style="padding:8px; border:1px solid #ddd;">TOTAL</td>
+                <td style="padding:8px; border:1px solid #ddd;"></td>
+                <td style="padding:8px; border:1px solid #ddd;"></td>
+                <td style="padding:8px; border:1px solid #ddd; text-align:right;">${totalHeures.toFixed(2)} h</td>
+                <td style="padding:8px; border:1px solid #ddd; text-align:right;">${totalMatos.toFixed(2)} €</td>
+                <td style="padding:8px; border:1px solid #ddd; text-align:right; background:#fff8e1; color:#e67e22;">${totalCout.toFixed(2)} €</td>
+                <td style="padding:8px; border:1px solid #ddd;"></td>
+                <td></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Récap marge globale du chantier -->
+        <div style="margin-top:12px; display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:8px;">
+          <div style="padding:10px 12px; background:#f0f7eb; border-left:3px solid #3d6f28; border-radius:0 6px 6px 0;">
+            <div style="font-size:11px; color:#666; text-transform:uppercase;">CA chantier</div>
+            <div style="font-size:18px; font-weight:700; color:#3d6f28;">${ca.toFixed(2)} €</div>
+          </div>
+          <div style="padding:10px 12px; background:#fff8e1; border-left:3px solid #e67e22; border-radius:0 6px 6px 0;">
+            <div style="font-size:11px; color:#666; text-transform:uppercase;">Coût total</div>
+            <div style="font-size:18px; font-weight:700; color:#e67e22;">${totalCout.toFixed(2)} €</div>
+            <div style="font-size:11px; color:#888;">MO + matériel</div>
+          </div>
+          <div style="padding:10px 12px; background:#fff; border-left:3px solid ${margeColor}; border-radius:0 6px 6px 0;">
+            <div style="font-size:11px; color:#666; text-transform:uppercase;">Marge nette</div>
+            <div style="font-size:18px; font-weight:700; color:${margeColor};">${margeChantier.toFixed(2)} €</div>
+            <div style="font-size:11px; color:${margeColor};">${ca > 0 ? margePct.toFixed(1) + '% du CA' : '—'}</div>
+          </div>
+        </div>`}
+    </div>
+  `;
+}
+
+function addChantierRentabLine(chId) {
+  const ch = data.chantiers.find(c => c.id === chId);
+  if (!ch) return;
+  if (!ch.rentabilitePrestations) ch.rentabilitePrestations = [];
+  ch.rentabilitePrestations.push({ desc: '', qty: 0, unit: 'ml', heures: 0, coutMatos: 0 });
+  saveData();
+  renderChantierDetail(ch);
+}
+
+function updateChantierRentabLine(chId, idx, field, value) {
+  const ch = data.chantiers.find(c => c.id === chId);
+  if (!ch || !ch.rentabilitePrestations || !ch.rentabilitePrestations[idx]) return;
+  ch.rentabilitePrestations[idx][field] = value;
+  saveData();
+  renderChantierDetail(ch);
+}
+
+// Pour les inputs texte (desc, unit) : pas de re-render à chaque touche, juste sauvegarde
+function updateChantierRentabLineNoRender(chId, idx, field, value) {
+  const ch = data.chantiers.find(c => c.id === chId);
+  if (!ch || !ch.rentabilitePrestations || !ch.rentabilitePrestations[idx]) return;
+  ch.rentabilitePrestations[idx][field] = value;
+  saveData();
+}
+
+function removeChantierRentabLine(chId, idx) {
+  const ch = data.chantiers.find(c => c.id === chId);
+  if (!ch || !ch.rentabilitePrestations) return;
+  ch.rentabilitePrestations.splice(idx, 1);
+  saveData();
+  renderChantierDetail(ch);
 }
 
 function updateChantierField(chId, field, val) {
