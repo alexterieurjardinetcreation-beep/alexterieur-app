@@ -6769,6 +6769,24 @@ function applyDevisPDFToChantierForm() {
   }
 
   _pendingDevisPDFData = null;
+
+  // ===== AUTO-VALIDATION : créer directement le chantier si la modal "+ Nouveau chantier" est ouverte =====
+  // Évite à Alex d'avoir à cliquer "Enregistrer" en plus
+  const modalAdd2 = document.getElementById('modal-add-chantier');
+  if (modalAdd2 && modalAdd2.style.display && modalAdd2.style.display !== 'none') {
+    const finalClient = (document.getElementById('modal-new-client')?.value || '').trim();
+    if (finalClient) {
+      // Toutes les infos requises sont là → créer directement
+      setTimeout(() => {
+        if (typeof saveChantierFromModal === 'function') {
+          saveChantierFromModal();
+          toast('✅ Chantier créé avec succès depuis le devis !');
+        }
+      }, 250);
+    } else {
+      toast('⚠️ Renseigne le nom du client puis clique "Enregistrer"');
+    }
+  }
 }
 
 /* ============ ACHATS (factures fournisseurs) ============ */
