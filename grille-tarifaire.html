@@ -2040,6 +2040,11 @@ function loadData() {
       if (!parsed.stock) parsed.stock = [];
       if (!parsed.achats) parsed.achats = [];
       if (!parsed.soustraitants) parsed.soustraitants = [];
+      if (!parsed.prestataires || !Array.isArray(parsed.prestataires)) {
+        parsed.prestataires = [
+          { id: 'pr_alex_default', name: 'Alex', tauxHeure: 50 }
+        ];
+      }
       if (!parsed.companyInfo) parsed.companyInfo = {
         name: "E.I Alex'terieur",
         address: "",
@@ -3344,6 +3349,7 @@ function closeModalAddChantier() {
   const modal = document.getElementById('modal-add-chantier');
   if (modal) modal.style.display = 'none';
   _modalChantierClientId = null;
+  _pendingDevisIdFromPDF = null;
 }
 
 function saveChantierFromModal() {
@@ -3395,6 +3401,18 @@ function saveChantierFromModal() {
     prestations: [],
     achats: []
   };
+
+  // Si un devis vient d'être créé depuis l'import PDF, le lier au chantier
+  if (_pendingDevisIdFromPDF) {
+    chantier.devisId = _pendingDevisIdFromPDF;
+    // Mettre à jour le devis : clientId si manquant + chantierId pour le lien retour
+    const dv = data.devis.find(x => x.id === _pendingDevisIdFromPDF);
+    if (dv) {
+      if (!dv.clientId) dv.clientId = clientRec.id;
+      dv.chantierId = chantier.id;
+    }
+    _pendingDevisIdFromPDF = null;
+  }
 
   const cidForRefresh = _modalChantierClientId || clientRec.id;
 
@@ -6348,6 +6366,7 @@ function showPasteImport() {
 /* ============ IMPORT DEVIS PDF → CHANTIER ============ */
 
 let _pendingDevisPDFData = null; // stocke les données parsées en attente de confirmation
+let _pendingDevisIdFromPDF = null; // id du devis créé depuis l'import PDF, à lier au prochain chantier sauvegardé
 
 async function parseDevisPDFForChantier(file) {
   // Extrait le texte (PDF ou image OCR)
@@ -6444,6 +6463,8 @@ async function parseDevisPDFForChantier(file) {
     montantHT: totalHT,
     materielLibre: materielText,
     nbLignes: parsed.items.length,
+    numero: parsed.ref || '',
+    items: parsed.items || [],
     fileName: file.name
   };
 }
@@ -6597,6 +6618,49 @@ function applyDevisPDFToChantierForm() {
     else toast('Formulaire pré-rempli depuis le PDF');
   } else {
     toast('Formulaire pré-rempli depuis le PDF');
+  }
+
+  // --- Recréer un VRAI devis dans data.devis pour pouvoir faire la rentabilité ---
+  // (lignes + client + montant), statut 'signe' car on démarre un chantier
+  _pendingDevisIdFromPDF = null;
+  const lignesPDF = (d.items || []).filter(it => (it.desc || '').trim().length > 0);
+  if (lignesPDF.length > 0) {
+    // Trouver le clientId (vient d'être créé/trouvé juste au-dessus)
+    const normalize = s => (s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    const clientRecForDevis = nomFinal
+      ? (data.clients || []).find(c => normalize(c.name) === normalize(nomFinal))
+      : null;
+
+    const devisLines = lignesPDF.map(it => ({
+      itemId: null,
+      desc: (it.desc || '') + (it.ref ? ' [' + it.ref + ']' : ''),
+      qty: it.qty || 1,
+      price: it.unitPrice || 0
+    }));
+    const sumLines = devisLines.reduce((s, l) => s + (l.qty || 0) * (l.price || 0), 0);
+    const totalHT = editedMontant > 0 ? editedMontant : sumLines;
+    const tvaRate = 0.20;
+    const tva = totalHT * tvaRate;
+    const totalTTC = totalHT + tva;
+
+    const newDevis = {
+      id: 'dv_' + Date.now() + '_' + Math.random().toString(36).slice(2,6),
+      clientId: clientRecForDevis ? clientRecForDevis.id : null,
+      numero: d.numero || '',
+      date: editedDate || new Date().toISOString().slice(0,10),
+      validite: 30,
+      notes: `Importé depuis ${d.fileName}`,
+      status: 'signe',
+      lines: devisLines,
+      totalHT,
+      totalTTC,
+      tva
+    };
+    if (!data.devis) data.devis = [];
+    data.devis.push(newDevis);
+    saveData();
+    _pendingDevisIdFromPDF = newDevis.id;
+    toast(`📄 Devis recréé (${devisLines.length} ligne${devisLines.length > 1 ? 's' : ''}) — dispo dans l'onglet Devis`);
   }
 
   _pendingDevisPDFData = null;
@@ -7697,6 +7761,16 @@ function renderChantierDetail(ch) {
 
     ${isPatron() ? renderUserSessionsBreakdown(ch) : ''}
 
+    ${(isPatron() && devis) ? `
+      <div style="margin-top:18px; padding:14px 16px; background:#fff; border:1px solid #e0e6d8; border-radius:8px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+          <h3 style="margin:0; color:var(--green-dark);">📊 Rentabilité du devis lié</h3>
+          <span style="font-size:12px; color:#888;">Devis ${escapeHtml(devis.numero || '(sans numéro)')} — ${(devis.lines || []).length} ligne(s)</span>
+        </div>
+        ${renderDevisRentabilite(devis)}
+      </div>
+    ` : ''}
+
     <!-- Champs editables -->
     <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
       <div class="field" style="max-width:140px;">
@@ -8313,15 +8387,28 @@ function openGoogleAgenda(chId) {
 
 /* ============ TIMER CHANTIER ============ */
 
-function timerStartSession(chId) {
+function timerStartSession(chId, prestataireId) {
   const ch = data.chantiers.find(c => c.id === chId);
   if (!ch) return;
   if (ch.activeSession) { toast('Timer déjà en cours — arrête-le d\'abord'); return; }
-  ch.activeSession = { start: new Date().toISOString(), pauses: [] };
+  // Récupérer le prestataire choisi (par défaut : Alex)
+  const prests = data.prestataires || [];
+  const pr = prestataireId
+    ? prests.find(p => p.id === prestataireId)
+    : (prests.find(p => p.id === 'pr_alex_default') || prests[0]);
+  ch.activeSession = {
+    start: new Date().toISOString(),
+    pauses: [],
+    prestataireId: pr ? pr.id : null,
+    prestataireName: pr ? pr.name : 'Alex',
+    tauxHeure: pr ? (pr.tauxHeure || 0) : 0
+  };
   saveData();
-  renderChantierDetail(ch);
+  if (typeof renderChantierDetail === 'function' && document.getElementById('chantier-detail')?.style.display !== 'none') {
+    renderChantierDetail(ch);
+  }
   startTimerTick(chId);
-  toast('Timer démarré');
+  toast(`Timer démarré pour ${ch.activeSession.prestataireName}`);
 }
 
 function timerPauseSession(chId) {
@@ -8369,12 +8456,17 @@ function timerStopSession(chId) {
   // Ajouter à sessions[]
   if (!ch.sessions) ch.sessions = [];
   const sid = 'ses_' + Date.now() + '_' + Math.random().toString(36).slice(2, 5);
+  const tauxH = session.tauxHeure || 0;
   ch.sessions.push({
     id: sid,
     start: session.start,
     end: endTime,
     pauses: pauses,
-    duration: durationH
+    duration: durationH,
+    prestataireId: session.prestataireId || null,
+    prestataireName: session.prestataireName || 'Alex',
+    tauxHeure: tauxH,
+    cout: Math.round(durationH * tauxH * 100) / 100
   });
 
   // Recalcul des heures totales depuis sessions
@@ -8732,116 +8824,87 @@ function renderAccueilPage() {
   } else {
     todayHTML = chantiersAujourdhui.map(ch => {
       const nom = escapeHtml(ch.client || (data.clients.find(c => c.id === ch.clientId) || {}).name || '?');
-      const adresse = ch.adresse || '';
-      const isActive = !!ch.activeSession;
-      const cardClass = isActive ? 'accueil-chantier-card active-timer' : 'accueil-chantier-card';
+      const adresse = ch.adresse || (data.clients.find(c => c.id === ch.clientId) || {}).address || '';
       const gpsBtn = adresse ? `<button class="btn-secondary btn-small" onclick="event.stopPropagation(); window.open('https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent('${adresse.replace(/'/g,"\\'")}'),'_blank')" title="Ouvrir dans Maps">📍 GPS</button>` : '';
-      let timerBtn = '';
-      if (isActive) {
-        const startMs = new Date(ch.activeSession.start).getTime();
-        const durH = ((Date.now() - startMs) / 3600000);
-        const hh = Math.floor(durH);
-        const mm = Math.floor((durH - hh) * 60);
-        const timerStr = (hh > 0 ? hh + 'h' : '') + String(mm).padStart(2,'0') + 'min';
-        timerBtn = `<span class="accueil-timer-live" id="accueil-timer-live-${ch.id}">⏱ ${timerStr}</span><button class="btn-danger btn-small" onclick="event.stopPropagation(); timerStopSession('${ch.id}'); setTimeout(renderAccueilPage, 100);">&#9632; Arrêter</button>`;
-      } else {
-        timerBtn = `<button class="btn-add btn-small" onclick="event.stopPropagation(); timerStartSession('${ch.id}'); setTimeout(renderAccueilPage, 100);">&#9654; Démarrer</button>`;
-      }
       const typeBadge = ch.type === 'babad' ? `<span style="font-size:10px; font-weight:700; padding:2px 7px; border-radius:10px; background:#e8f1f9; color:#2980b9; text-transform:uppercase; margin-left:6px;">BABAD</span>` : '';
       return `
-        <div class="${cardClass}" onclick="showPage('chantiers'); setTimeout(()=>viewChantier('${ch.id}'),150);">
+        <div class="accueil-chantier-card" onclick="showPage('chantiers'); setTimeout(()=>viewChantier('${ch.id}'),150);">
           <div style="flex:1; min-width:0;">
             <div class="accueil-chantier-title">${nom}${typeBadge}</div>
             ${adresse ? `<div class="accueil-chantier-meta">📍 ${escapeHtml(adresse)}</div>` : ''}
-            ${ch.notes ? `<div class="accueil-chantier-meta" style="margin-top:2px; font-style:italic;">${escapeHtml(ch.notes.slice(0,60))}${ch.notes.length > 60 ? '…' : ''}</div>` : ''}
           </div>
-          <div class="accueil-chantier-actions">${gpsBtn}${timerBtn}</div>
+          <div class="accueil-chantier-actions">${gpsBtn}</div>
         </div>
       `;
     }).join('');
   }
 
-  // --- Alertes (réutilise la logique de renderChantiersAlertes) ---
-  const alertes = _computeAlertesAccueil();
-  let alertesHTML = '';
-  if (alertes.length > 0) {
-    alertesHTML = alertes.map(a => {
-      const cls = a.level === 'urgent' ? 'accueil-alerte-urgent' : a.level === 'warning' ? 'accueil-alerte-warning' : 'accueil-alerte-info';
-      return `<div class="accueil-alerte-row ${cls}" ${a.action || ''}>
-        <span style="font-size:16px; flex-shrink:0;">${a.icon}</span>
-        <span>${a.text}</span>
-      </div>`;
-    }).join('');
-  }
+  // --- Pointage : timer actif ? ---
+  const chantierActif = (data.chantiers || []).find(ch => ch.activeSession);
+  const prestataires = data.prestataires || [];
 
-  // --- KPIs (réutilise les calculs du dashboard) ---
-  const { start: monthStart, end: monthEnd } = getMonthBounds();
-  const chantiersMois = chantiers.filter(ch => isChantierInRange(ch, monthStart, monthEnd));
-  const caMois = chantiersMois.reduce((s, ch) => s + chantierRevenueFor(ch), 0);
-
-  const chantiersClosMois = chantiersMois.filter(ch => (ch.statut || 'en_cours') === 'cloture');
-  const marges = chantiersClosMois.map(chantierMargePercent).filter(v => v !== null && !isNaN(v));
-  const margeMoy = marges.length > 0 ? (marges.reduce((s, v) => s + v, 0) / marges.length) : null;
-  const cible = data.targetMarginPercent || 35;
-  let margeColor = '#888'; let margeText = '—';
-  if (margeMoy !== null) {
-    margeText = `${margeMoy.toFixed(0)}%`;
-    margeColor = margeMoy >= cible ? '#27ae60' : margeMoy >= 20 ? '#e67e22' : '#e74c3c';
-  }
-
-  const heuresMois = chantiersMois.reduce((s, ch) => s + (ch.hours || 0), 0);
-
-  const today2 = new Date(); today2.setHours(0,0,0,0);
-  const future = chantiers.filter(ch => {
-    if (!ch.date) return false;
-    const stat = ch.statut || 'en_cours';
-    if (stat !== 'planifie' && stat !== 'en_cours') return false;
-    const d = new Date(ch.date + 'T00:00:00');
-    return d > today2;
-  }).sort((a, b) => new Date(a.date) - new Date(b.date));
-  const prochain = future[0] || null;
-  let prochainLabel = 'Aucun planifié';
-  let prochainSub = '';
-  let prochainClick = '';
-  if (prochain) {
-    const nomCl = prochain.client || (data.clients.find(c => c.id === prochain.clientId) || {}).name || '?';
-    prochainLabel = (nomCl.length > 18 ? nomCl.slice(0,17) + '…' : nomCl);
-    const d = new Date(prochain.date + 'T00:00:00');
-    const diff = Math.round((d - today2) / (1000*60*60*24));
-    const dateFmt = d.getDate() + '/' + (d.getMonth()+1);
-    prochainSub = diff === 1 ? 'Demain · ' + dateFmt : 'Dans ' + diff + 'j · ' + dateFmt;
-    prochainClick = `onclick="showPage('chantiers'); setTimeout(()=>viewChantier('${prochain.id}'),150);"`;
-  }
-
-  // --- Render final ---
-  const showPatron = typeof isPatron !== 'function' || isPatron();
-  const kpisSection = showPatron ? `
-    <div class="accueil-section">
-      <div class="accueil-section-title">📊 Ce mois-ci</div>
-      <div class="accueil-kpis">
-        <div class="accueil-kpi" onclick="showPage('chantiers')">
-          <div class="accueil-kpi-label">💰 CA</div>
-          <div class="accueil-kpi-value" style="color:#3d6f28;">${caMois > 0 ? caMois.toFixed(0) + ' €' : '—'}</div>
-          <div class="accueil-kpi-sub">${chantiersMois.length} chantier${chantiersMois.length > 1 ? 's' : ''}</div>
+  let pointageHTML = '';
+  if (chantierActif) {
+    const ch = chantierActif;
+    const sess = ch.activeSession;
+    const cliName = (data.clients.find(c => c.id === ch.clientId) || {}).name || ch.client || '?';
+    const startMs = new Date(sess.start).getTime();
+    const durH = ((Date.now() - startMs) / 3600000);
+    const hh = Math.floor(durH);
+    const mm = Math.floor((durH - hh) * 60);
+    const timerStr = (hh > 0 ? hh + 'h' : '') + String(mm).padStart(2,'0') + 'min';
+    pointageHTML = `
+      <div style="background:#f4faf0; border:2px solid #2ecc71; border-radius:10px; padding:14px;">
+        <div style="font-size:13px; color:#666; margin-bottom:6px;">⏱ Timer en cours</div>
+        <div style="font-size:18px; font-weight:600; margin-bottom:4px;">${escapeHtml(sess.prestataireName || 'Alex')} <span style="font-size:13px; color:#888; font-weight:400;">(${(sess.tauxHeure || 0).toFixed(0)}€/h)</span></div>
+        <div style="font-size:14px; color:#3d6f28; margin-bottom:10px;">📍 sur chantier <strong>${escapeHtml(cliName)}</strong></div>
+        <div style="font-size:32px; font-weight:700; color:#27ae60; margin-bottom:12px;" id="accueil-pointage-timer">${timerStr}</div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="btn-danger" onclick="timerStopSession('${ch.id}'); setTimeout(renderAccueilPage, 100);">■ Arrêter & enregistrer</button>
         </div>
-        <div class="accueil-kpi" onclick="showPage('business')">
-          <div class="accueil-kpi-label">📈 Marge</div>
-          <div class="accueil-kpi-value" style="color:${margeColor};">${margeText}</div>
-          <div class="accueil-kpi-sub">Cible ${cible}%</div>
-        </div>
-        <div class="accueil-kpi" onclick="showPage('chantiers')">
-          <div class="accueil-kpi-label">⏱ Heures</div>
-          <div class="accueil-kpi-value" style="color:#2980b9;">${heuresMois > 0 ? heuresMois + 'h' : '—'}</div>
-          <div class="accueil-kpi-sub">ce mois</div>
-        </div>
-        <div class="accueil-kpi" ${prochainClick} style="${prochain ? 'cursor:pointer;' : ''}">
-          <div class="accueil-kpi-label">📅 Prochain</div>
-          <div class="accueil-kpi-value" style="color:#2980b9; font-size:15px;">${escapeHtml(prochainLabel)}</div>
-          <div class="accueil-kpi-sub">${prochainSub}</div>
-        </div>
+        <div style="font-size:12px; color:#888; margin-top:8px;">À l'arrêt : les heures et le coût sont ajoutés à la rentabilité du chantier.</div>
       </div>
-    </div>
-  ` : '';
+    `;
+  } else {
+    // Pas de timer actif : sélecteur chantier + prestataire
+    const chantiersDispo = (data.chantiers || []).filter(ch => (ch.statut || 'en_cours') !== 'cloture')
+      .sort((a,b) => (a.date || '') < (b.date || '') ? 1 : -1);
+    const chantierOptions = chantiersDispo.length === 0
+      ? '<option value="">Aucun chantier ouvert</option>'
+      : chantiersDispo.map(ch => {
+          const cliName = (data.clients.find(c => c.id === ch.clientId) || {}).name || ch.client || '?';
+          const isToday = ch.date === todayStr;
+          const dateLbl = ch.date ? (isToday ? 'aujourd\'hui' : ch.date) : 'sans date';
+          const sel = isToday ? 'selected' : '';
+          return `<option value="${ch.id}" ${sel}>${escapeHtml(cliName)} — ${dateLbl}</option>`;
+        }).join('');
+    const prestOptions = prestataires.map(p =>
+      `<option value="${p.id}" ${p.id === 'pr_alex_default' ? 'selected' : ''}>${escapeHtml(p.name)} — ${p.tauxHeure}€/h</option>`
+    ).join('');
+    pointageHTML = `
+      <div style="background:#fff; border:1px solid #e0e0e0; border-radius:10px; padding:14px;">
+        <div style="display:grid; grid-template-columns:1fr; gap:10px;">
+          <div>
+            <label style="font-size:12px; color:#666; display:block; margin-bottom:4px;">Chantier</label>
+            <select id="pointage-chantier" style="width:100%; padding:8px 10px; border:1px solid #d4d4d4; border-radius:6px; font-size:14px;">
+              ${chantierOptions}
+            </select>
+          </div>
+          <div>
+            <label style="font-size:12px; color:#666; display:block; margin-bottom:4px;">Qui pointe</label>
+            <div style="display:flex; gap:6px;">
+              <select id="pointage-prestataire" style="flex:1; padding:8px 10px; border:1px solid #d4d4d4; border-radius:6px; font-size:14px;">
+                ${prestOptions}
+              </select>
+              <button class="btn-secondary btn-small" onclick="addPrestataireInline()" title="Ajouter un prestataire">+</button>
+            </div>
+          </div>
+          <button class="btn-add" onclick="startPointageFromAccueil()" style="font-size:15px; padding:12px;">▶ Démarrer le pointage</button>
+        </div>
+        ${prestataires.length > 1 ? `<div style="margin-top:8px; text-align:right;"><button class="btn-link" style="background:none; border:none; color:#888; font-size:11px; cursor:pointer; text-decoration:underline;" onclick="openPrestatairesModal()">Gérer les prestataires</button></div>` : ''}
+      </div>
+    `;
+  }
 
   el.innerHTML = `
     <div class="accueil-greeting">👋 ${salut} Alex &nbsp;<span style="font-size:14px; font-weight:400; color:#888;">${greetingText}</span></div>
@@ -8849,41 +8912,72 @@ function renderAccueilPage() {
     <div class="accueil-section">
       <div class="accueil-section-title">📅 Aujourd'hui</div>
       <div id="accueil-today-list">${todayHTML}</div>
-      <div id="accueil-today-agenda" style="margin-top:${chantiersAujourdhui.length > 0 ? '10px' : '0'};">
-        <div style="font-size:11px; color:#aaa; margin-bottom:6px; font-weight:600; text-transform:uppercase; letter-spacing:.04em;">Agenda Google</div>
-        <div id="accueil-agenda-content"><div style="color:#aaa; font-size:12px;">Chargement agenda…</div></div>
-      </div>
     </div>
 
-    ${alertes.length > 0 ? `
     <div class="accueil-section">
-      <div class="accueil-section-title">🚨 Alertes</div>
-      ${alertesHTML}
-    </div>` : ''}
-
-    ${kpisSection}
+      <div class="accueil-section-title">🗓️ Agenda — Cette semaine</div>
+      <div id="accueil-agenda-content"><div style="color:#aaa; font-size:12px;">Chargement agenda…</div></div>
+    </div>
 
     <div class="accueil-section">
-      <div class="accueil-section-title">⚡ Actions rapides</div>
-      <div class="accueil-actions-grid">
-        <button class="accueil-action-btn" onclick="openModalAddChantier()">
-          <span class="ab-icon">🏗️</span>+ Chantier
-        </button>
-        <button class="accueil-action-btn" onclick="showPage('achats')">
-          <span class="ab-icon">🛒</span>+ Achat
-        </button>
-        <button class="accueil-action-btn" onclick="_accueilPhotoChantier()">
-          <span class="ab-icon">📷</span>+ Photo
-        </button>
-      </div>
+      <div class="accueil-section-title">⏱️ Pointage du jour</div>
+      ${pointageHTML}
     </div>
   `;
 
   // Charger l'agenda Google de manière asynchrone si disponible
   _accueilLoadAgenda();
 
-  // Lancer le timer live si un chantier du jour est en cours
+  // Lancer le timer live si un timer est en cours
   _accueilStartTimerLive();
+}
+
+function startPointageFromAccueil() {
+  const chSel = document.getElementById('pointage-chantier');
+  const prSel = document.getElementById('pointage-prestataire');
+  if (!chSel || !chSel.value) { alert('Choisis un chantier.'); return; }
+  if (!prSel || !prSel.value) { alert('Choisis qui pointe.'); return; }
+  timerStartSession(chSel.value, prSel.value);
+  setTimeout(renderAccueilPage, 100);
+}
+
+function addPrestataireInline() {
+  const name = (prompt('Nom du prestataire :') || '').trim();
+  if (!name) return;
+  const tauxStr = (prompt('Taux horaire (€/h) :', '50') || '').trim().replace(',', '.');
+  const taux = parseFloat(tauxStr);
+  if (!taux || taux <= 0) { alert('Taux invalide.'); return; }
+  if (!data.prestataires) data.prestataires = [];
+  const id = 'pr_' + Date.now() + '_' + Math.random().toString(36).slice(2, 5);
+  data.prestataires.push({ id, name, tauxHeure: taux });
+  saveData();
+  toast(`Prestataire ${name} ajouté (${taux}€/h)`);
+  renderAccueilPage();
+}
+
+function openPrestatairesModal() {
+  const prests = data.prestataires || [];
+  if (prests.length === 0) { alert('Aucun prestataire.'); return; }
+  const list = prests.map(p => `${p.name} — ${p.tauxHeure}€/h`).join('\n');
+  const action = prompt(
+    `Prestataires actuels :\n\n${list}\n\nTape "supprimer NOM" pour en retirer un, ou laisse vide pour fermer.`,
+    ''
+  );
+  if (!action) return;
+  const m = action.trim().match(/^supprimer\s+(.+)$/i);
+  if (m) {
+    const targetName = m[1].trim().toLowerCase();
+    if (targetName === 'alex') { alert('Alex ne peut pas être supprimé.'); return; }
+    const before = data.prestataires.length;
+    data.prestataires = data.prestataires.filter(p => p.name.toLowerCase() !== targetName);
+    if (data.prestataires.length < before) {
+      saveData();
+      toast(`Prestataire ${m[1]} supprimé`);
+      renderAccueilPage();
+    } else {
+      alert(`Aucun prestataire nommé "${m[1]}" trouvé.`);
+    }
+  }
 }
 
 function _computeAlertesAccueil() {
@@ -8917,20 +9011,56 @@ function _computeAlertesAccueil() {
 let _accueilTimerInterval = null;
 function _accueilStartTimerLive() {
   if (_accueilTimerInterval) { clearInterval(_accueilTimerInterval); _accueilTimerInterval = null; }
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const actifs = (data.chantiers || []).filter(ch => ch.date === todayStr && ch.activeSession);
-  if (actifs.length === 0) return;
+  const ch = (data.chantiers || []).find(c => c.activeSession);
+  if (!ch) return;
   _accueilTimerInterval = setInterval(() => {
-    actifs.forEach(ch => {
-      const el = document.getElementById('accueil-timer-live-' + ch.id);
-      if (!el) { clearInterval(_accueilTimerInterval); _accueilTimerInterval = null; return; }
-      const durH = (Date.now() - new Date(ch.activeSession.start).getTime()) / 3600000;
-      const hh = Math.floor(durH);
-      const mm = Math.floor((durH - hh) * 60);
-      const ss = Math.floor(((durH - hh) * 60 - mm) * 60);
-      el.textContent = '⏱ ' + (hh > 0 ? hh + 'h' : '') + String(mm).padStart(2,'0') + ':' + String(ss).padStart(2,'0');
-    });
+    const el = document.getElementById('accueil-pointage-timer');
+    if (!el || !ch.activeSession) { clearInterval(_accueilTimerInterval); _accueilTimerInterval = null; return; }
+    const durH = (Date.now() - new Date(ch.activeSession.start).getTime()) / 3600000;
+    const hh = Math.floor(durH);
+    const mm = Math.floor((durH - hh) * 60);
+    const ss = Math.floor(((durH - hh) * 60 - mm) * 60);
+    el.textContent = (hh > 0 ? hh + 'h' : '') + String(mm).padStart(2,'0') + ':' + String(ss).padStart(2,'0');
   }, 1000);
+}
+
+let _accueilWeekOffset = 0; // 0 = cette semaine, -1 = précédente, +1 = suivante
+
+function _accueilWeekNav(delta) {
+  _accueilWeekOffset += delta;
+  _accueilLoadAgenda();
+}
+
+function _accueilRenderEventLine(ev) {
+  const cls = classifyAgendaEvent(ev);
+  const timeRange = getEventTimeRange(ev);
+  const title = escapeHtml(ev.summary || '(Sans titre)');
+  const activeCh = findActiveChantierForEvent(ev.id);
+  const isActive = !!activeCh;
+  const safeId = String(ev.id).replace(/'/g, "\\'");
+  const badgeBg = cls.type === 'babad' ? '#e8f1f9' : cls.type === 'chantier' ? '#eaf4e3' : '#f0f0f0';
+  let timerBtn = '';
+  if (isActive) {
+    timerBtn = `<button class="btn-danger btn-small" onclick="stopTimerFromGoogleEvent('${safeId}'); setTimeout(renderAccueilPage,100);">&#9632; Arrêter</button>`;
+  } else {
+    const t = cls.type === 'babad' ? 'babad' : cls.type === 'chantier' ? 'chantier' : 'autre';
+    timerBtn = `<button class="btn-add btn-small" onclick="startTimerFromGoogleEvent('${safeId}', null, '${t}'); setTimeout(renderAccueilPage,100);">&#9654; Démarrer</button>`;
+  }
+  const loc = ev.location ? `<div style="font-size:11px; color:#888;">📍 ${escapeHtml(ev.location)}</div>` : '';
+  const highlight = isActive ? 'border:2px solid #2ecc71; background:#f4faf0;' : 'border:1px solid #e0e0e0; background:#fff;';
+  return `<div style="${highlight} border-radius:8px; padding:8px 10px; margin-bottom:5px;">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px; flex-wrap:wrap;">
+      <div style="flex:1; min-width:0;">
+        <div style="display:flex; align-items:center; gap:6px; margin-bottom:2px; flex-wrap:wrap;">
+          <span style="font-size:9px; font-weight:700; padding:2px 6px; border-radius:10px; background:${badgeBg}; color:${cls.color}; text-transform:uppercase;">${cls.label}</span>
+          <span style="font-weight:600; font-size:13px;">${title}</span>
+        </div>
+        <div style="font-size:11px; color:#666;">⏰ ${timeRange}</div>
+        ${loc}
+      </div>
+      <div style="display:flex; gap:6px; align-items:center; flex-shrink:0;">${timerBtn}</div>
+    </div>
+  </div>`;
 }
 
 async function _accueilLoadAgenda() {
@@ -8940,46 +9070,75 @@ async function _accueilLoadAgenda() {
     el.innerHTML = `<div style="color:#aaa; font-size:12px;">🔌 Connecte Google pour voir ton agenda.</div>`;
     return;
   }
-  el.innerHTML = `<div style="color:#aaa; font-size:12px;">🔄 Chargement…</div>`;
+  const { monday, sunday } = getPlanningWeekBounds(_accueilWeekOffset);
+  const moisCourt = ['janv','févr','mars','avril','mai','juin','juil','août','sept','oct','nov','déc'];
+  const lblPeriode = `${monday.getDate()} ${moisCourt[monday.getMonth()]} → ${sunday.getDate()} ${moisCourt[sunday.getMonth()]}`;
+  const semainesLabel = _accueilWeekOffset === 0 ? 'Cette semaine'
+                      : _accueilWeekOffset === -1 ? 'Sem. précédente'
+                      : _accueilWeekOffset === 1 ? 'Sem. prochaine'
+                      : (_accueilWeekOffset > 0 ? `+${_accueilWeekOffset} sem.` : `${_accueilWeekOffset} sem.`);
+  const navBar = `
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:8px; flex-wrap:wrap;">
+      <button class="btn-secondary btn-small" onclick="_accueilWeekNav(-1)" title="Semaine précédente">←</button>
+      <div style="text-align:center; flex:1;">
+        <div style="font-size:13px; font-weight:600; color:#3d6f28;">${semainesLabel}</div>
+        <div style="font-size:11px; color:#888;">${lblPeriode}</div>
+      </div>
+      <button class="btn-secondary btn-small" onclick="_accueilWeekNav(1)" title="Semaine suivante">→</button>
+    </div>
+  `;
+
+  el.innerHTML = navBar + `<div style="color:#aaa; font-size:12px;">🔄 Chargement…</div>`;
   try {
-    const events = await fetchTodayCalendarEvents(false);
-    if (!events || events.length === 0) {
-      el.innerHTML = `<div style="color:#aaa; font-size:12px;">Rien dans l'agenda aujourd'hui.</div>`;
+    const events = await fetchWeekCalendarEvents(monday, sunday, false);
+    if (events === null) {
+      el.innerHTML = navBar + `<div style="color:#e67e22; font-size:12px;">⚠️ Impossible de charger l'agenda.</div>`;
       return;
     }
-    el.innerHTML = events.map(ev => {
-      const cls = classifyAgendaEvent(ev);
-      const timeRange = getEventTimeRange(ev);
-      const title = escapeHtml(ev.summary || '(Sans titre)');
-      const activeCh = findActiveChantierForEvent(ev.id);
-      const isActive = !!activeCh;
-      const safeId = String(ev.id).replace(/'/g, "\\'");
-      const badgeBg = cls.type === 'babad' ? '#e8f1f9' : cls.type === 'chantier' ? '#eaf4e3' : '#f0f0f0';
-      let timerBtn = '';
-      if (isActive) {
-        timerBtn = `<button class="btn-danger btn-small" onclick="stopTimerFromGoogleEvent('${safeId}'); setTimeout(renderAccueilPage,100);">&#9632; Arrêter</button>`;
+    // Stocker pour que startTimerFromGoogleEvent retrouve l'event
+    _todayAgendaCache = { events: events, fetchedAt: Date.now() };
+
+    // Grouper par jour
+    const groups = {};
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(monday); d.setDate(monday.getDate() + i);
+      const k = d.toISOString().slice(0,10);
+      groups[k] = { date: new Date(d), events: [] };
+    }
+    events.forEach(ev => {
+      let dStr;
+      if (ev.start && ev.start.date) dStr = ev.start.date;
+      else if (ev.start && ev.start.dateTime) dStr = new Date(ev.start.dateTime).toISOString().slice(0,10);
+      else return;
+      if (groups[dStr]) groups[dStr].events.push(ev);
+    });
+
+    const todayStr = new Date().toISOString().slice(0,10);
+    const dayLabels = ['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'];
+    let html = navBar;
+    let totalEvents = 0;
+    Object.keys(groups).sort().forEach(k => {
+      const g = groups[k];
+      totalEvents += g.events.length;
+      const dayLbl = dayLabels[((g.date.getDay()+6)%7)];
+      const isToday = k === todayStr;
+      const dateLabel = `${dayLbl} ${g.date.getDate()} ${moisCourt[g.date.getMonth()]}`;
+      const headColor = isToday ? '#3d6f28' : '#888';
+      const todayMark = isToday ? ' · aujourd\'hui' : '';
+      const dayHeader = `<div style="font-size:12px; font-weight:700; color:${headColor}; margin:10px 0 4px; text-transform:uppercase; letter-spacing:.03em;">${dateLabel}${todayMark}</div>`;
+      if (g.events.length === 0) {
+        html += dayHeader + `<div style="color:#ccc; font-size:11px; padding:2px 0 2px 4px;">—</div>`;
       } else {
-        const t = cls.type === 'babad' ? 'babad' : cls.type === 'chantier' ? 'chantier' : 'autre';
-        timerBtn = `<button class="btn-add btn-small" onclick="startTimerFromGoogleEvent('${safeId}', null, '${t}'); setTimeout(renderAccueilPage,100);">&#9654; Démarrer</button>`;
+        html += dayHeader + g.events.map(_accueilRenderEventLine).join('');
       }
-      const loc = ev.location ? `<div style="font-size:11px; color:#888;">📍 ${escapeHtml(ev.location)}</div>` : '';
-      const highlight = isActive ? 'border:2px solid #2ecc71; background:#f4faf0;' : 'border:1px solid #e0e0e0; background:#fff;';
-      return `<div style="${highlight} border-radius:8px; padding:10px 12px; margin-bottom:6px;">
-        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px; flex-wrap:wrap;">
-          <div style="flex:1; min-width:0;">
-            <div style="display:flex; align-items:center; gap:6px; margin-bottom:2px; flex-wrap:wrap;">
-              <span style="font-size:10px; font-weight:700; padding:2px 7px; border-radius:10px; background:${badgeBg}; color:${cls.color}; text-transform:uppercase;">${cls.label}</span>
-              <span style="font-weight:600; font-size:14px;">${title}</span>
-            </div>
-            <div style="font-size:12px; color:#666;">⏰ ${timeRange}</div>
-            ${loc}
-          </div>
-          <div style="display:flex; gap:6px; align-items:center; flex-shrink:0;">${timerBtn}</div>
-        </div>
-      </div>`;
-    }).join('');
+    });
+    if (totalEvents === 0) {
+      html += `<div style="color:#aaa; font-size:12px; padding:8px 0; text-align:center;">Rien dans l'agenda cette semaine.</div>`;
+    }
+    el.innerHTML = html;
   } catch(e) {
-    el.innerHTML = `<div style="color:#aaa; font-size:12px;">Impossible de charger l'agenda.</div>`;
+    console.warn('_accueilLoadAgenda', e);
+    el.innerHTML = navBar + `<div style="color:#aaa; font-size:12px;">Impossible de charger l'agenda.</div>`;
   }
 }
 
