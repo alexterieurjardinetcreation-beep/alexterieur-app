@@ -3100,10 +3100,17 @@ function renderChantiers() {
         <button onclick="event.stopPropagation(); chantierListeDelete('${singleCh.id}');" title="Supprimer ce chantier" style="padding:5px 9px; border:1px solid #e74c3c; background:#fff; color:#e74c3c; border-radius:5px; cursor:pointer; font-size:13px;">🗑️</button>
       `;
     } else {
-      // Cas multi-chantiers : bouton fiche uniquement (gérer dans la fiche)
+      // Cas multi-chantiers : sélecteur groupé + bouton "tout supprimer"
+      const allIds = g.chantiers.map(c => c.id).join(',');
       actionsHtml = `
+        <select onclick="event.stopPropagation();" onchange="event.stopPropagation(); chantierListeChangeStatutGroup('${allIds}', this.value);" style="padding:5px 8px; border:1px solid #d4d4d4; border-radius:5px; font-size:12px; background:#fff; cursor:pointer;">
+          <option value="">${g.chantiers.length} chantiers — changer tous…</option>
+          <option value="planifie">🟦 Tous → À faire</option>
+          <option value="en_cours">🟧 Tous → En cours</option>
+          <option value="cloture">✅ Tous → Réalisé</option>
+        </select>
         ${g.clientId ? `<button class="btn-add btn-small" onclick="event.stopPropagation(); openClientFiche('${g.clientId}');" style="white-space:nowrap;">📂 Fiche</button>` : ''}
-        <span style="font-size:11px; color:#888; text-align:right;">${g.chantiers.length} chantiers · gère depuis la fiche</span>
+        <button onclick="event.stopPropagation(); chantierListeDeleteGroup('${allIds}', '${escapeAttr(g.name)}');" title="Supprimer TOUS les chantiers de ce client" style="padding:5px 9px; border:1px solid #e74c3c; background:#fff; color:#e74c3c; border-radius:5px; cursor:pointer; font-size:13px;">🗑️ Tout</button>
       `;
     }
 
@@ -3238,6 +3245,38 @@ function chantierListeDelete(chantierId) {
   data.chantiers = data.chantiers.filter(c => c.id !== chantierId);
   saveData();
   toast('Chantier supprimé');
+  renderChantiers();
+}
+
+// Suppression de tous les chantiers d'un client (cas multi-chantiers)
+function chantierListeDeleteGroup(idsCsv, clientName) {
+  const ids = (idsCsv || '').split(',').filter(Boolean);
+  if (ids.length === 0) return;
+  if (!confirm(`Supprimer TOUS les ${ids.length} chantiers de ${clientName} ?\n\nCette action est irréversible.`)) return;
+  ids.forEach(id => {
+    const ch = data.chantiers.find(c => c.id === id);
+    if (ch && ch.googleEventId && typeof googleDeleteChantierEvent === 'function') {
+      try { googleDeleteChantierEvent(ch.googleEventId); } catch(e) { console.warn('Calendar delete error', e); }
+    }
+  });
+  data.chantiers = data.chantiers.filter(c => !ids.includes(c.id));
+  saveData();
+  toast(`${ids.length} chantier(s) supprimé(s)`);
+  renderChantiers();
+}
+
+// Changement de statut groupé (cas multi-chantiers)
+function chantierListeChangeStatutGroup(idsCsv, newStatut) {
+  if (!newStatut) return;
+  const ids = (idsCsv || '').split(',').filter(Boolean);
+  if (ids.length === 0) return;
+  let count = 0;
+  ids.forEach(id => {
+    const ch = data.chantiers.find(c => c.id === id);
+    if (ch) { ch.statut = newStatut; ch.updatedAt = new Date().toISOString(); count++; }
+  });
+  saveData();
+  toast(`${count} chantier(s) mis à jour`);
   renderChantiers();
 }
 
